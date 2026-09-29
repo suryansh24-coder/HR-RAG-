@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+  }
+
+  /* Keyboard users must always be able to see where they are. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/70 ring-offset-2 ring-offset-canvas rounded-md;
+  }
+
+  ::selection {
+    @apply bg-accent/30;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-edge rounded-full border-2 border-solid border-transparent bg-clip-content;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-edge-strong;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-surface border border-edge rounded-xl shadow-panel;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium
+           transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-45;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-white hover:bg-accent-deep active:bg-accent-deep;
+  }
+  .btn-ghost {
+    @apply btn border border-edge bg-surface-raised text-ink-muted
+           hover:border-edge-strong hover:text-ink;
+  }
+  .btn-danger {
+    @apply btn border border-danger/35 bg-danger/10 text-danger hover:bg-danger/20;
+  }
+
+  .field {
+    @apply w-full rounded-lg border border-edge bg-surface-sunken px-3.5 py-2.5 text-sm
+           text-ink placeholder:text-ink-faint focus:border-accent/60;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-edge
+           bg-surface-raised px-2.5 py-1 text-xs font-medium text-ink-muted;
+  }
+
+  .skeleton {
+    @apply relative overflow-hidden rounded-md bg-surface-raised;
+  }
+  .skeleton::after {
+    @apply absolute inset-0 -translate-x-full animate-shimmer
+           bg-gradient-to-r from-transparent via-white/[.06] to-transparent;
+    content: "";
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
