@@ -18,83 +18,117 @@ destroyed neighbouring documents). A beautiful UI over a broken API is worthless
 - [x] Calibrate `SCORE_THRESHOLD` against a labelled evaluation set
 - [x] Rebuild the extractive provider (window scoring, heading handling, quantity
       questions) so it stops dropping the sentence that holds the answer
-- [x] Verification harness: `evaluation/` (32 cases) + `tests/smoke.py` (47 assertions)
+- [x] Verification harness: `evaluation/` (32 cases) + `tests/smoke.py` (50 assertions)
 
-**Exit criteria — met:** 36 unit tests, 32/32 evaluation, 47/47 smoke assertions.
+**Exit criteria — met:** 41 unit tests, 32/32 evaluation, 50/50 smoke assertions.
 
 ---
 
-## Phase 2 — Frontend ⬜ NEXT
+## Phase 2 — Frontend ✅ COMPLETE
 
-**Why now:** it is the largest remaining gap and the one the product is judged on.
-`frontend/` is an empty directory; the only UI that exists is FastAPI's Swagger
-page, which no user should have to see.
+**Why second:** the backend was correct but unusable — the only interface was
+Swagger.
 
 ### 2.1 Scaffold
 
-- [ ] Vite 5 + React 18 + TypeScript 5.6, strict mode
-- [ ] Tailwind CSS 3.4 with a design-token theme (no ad-hoc colour values)
-- [ ] React Router 6 for `/`, `/chat/:conversationId?`, `/documents`, `/about`
-- [ ] `lucide-react` icons, `framer-motion` for transitions, `react-markdown` +
-      `remark-gfm` for rendering answer text
-- [ ] Vitest + Testing Library, wired into `npm test`
+- [x] Vite 5 + React 18 + TypeScript 5.6, strict mode
+- [x] Tailwind CSS 3.4 with a design-token theme (no ad-hoc colour values)
+- [x] React Router 6 for `/`, `/chat/:conversationId`, `/documents`, `/dashboard`
+- [x] `lucide-react` icons, `react-markdown` + `remark-gfm` for answer text
+- [x] Vitest + Testing Library, wired into `npm test`
 
 ### 2.2 API layer
 
-- [ ] Typed client generated from `/openapi.json` — **no hand-written `any`**, and
-      no frontend field name that the API does not actually return (the smoke
-      test exists precisely because that assumption was wrong for `chunks_pending`,
-      `/api/rag/search` and the SSE event shape)
-- [ ] `fetchChat()` buffered and `streamChat()` SSE with a clean
-      `start → retrieving → sources → generating → complete | error` state machine
-- [ ] Abort in-flight streams on navigation; surface `error` events as UI state,
+- [x] Typed client hand-written against the real Pydantic schemas — **no `any`**,
+      and no field name the API does not return (the smoke test exists precisely
+      because that assumption was wrong for `chunks_pending`, `/api/rag/search`
+      and the SSE event shape)
+- [x] `api.chat()` buffered and `streamChat()` SSE with a clean
+      `start → retrieving → sources → generating → complete | error` state machine;
+      a truncated stream raises `stream_truncated` rather than returning a partial
+      answer
+- [x] Abort in-flight streams on navigation; surface `error` events as UI state,
       not console noise
-- [ ] Types for the management token, kept in memory only (never `localStorage`)
+- [x] Management token held in a module variable for the tab's lifetime, never in
+      `localStorage`
+- [x] Optional `VITE_API_ORIGIN` for split-origin deployments, same-origin by
+      default
 
 ### 2.3 Screens
 
-- [ ] **Chat** — message list, streaming answer, collapsible source citations
-      showing filename, page, score and snippet, suggested follow-ups, stop
-      button, copy-answer
-- [ ] **Documents** — drag-and-drop upload with client-side size/type checks and
+- [x] **Chat** — message list, streaming answer, collapsible source citations with
+      filename, page, score and snippet, "open the source file", suggested
+      follow-ups, stop button, copy answer
+- [x] **Documents** — drag-and-drop upload with client-side size/type checks and
       real progress, live `pending → processing → ready | failed` polling, chunk
-      counts, preview, re-index, delete with confirmation
-- [ ] **Dashboard** — real numbers from `/api/rag/stats` only. No invented
-      metrics, no placeholder charts.
-- [ ] **Provider banner** — when `llm_provider === "extractive"`, state plainly
-      that answers are quoted extracts, not generated prose
+      counts, chunk preview, reindex, delete with confirmation
+- [x] **Dashboard** — real numbers from `/api/rag/stats` and `/api/rag/queries`
+      only. No invented metrics, no placeholder charts. Hero with live knowledge-base
+      summary, system-status pills and quick questions that hand off to chat
+      (`/chat?q=…`, answered by the same pipeline)
+- [x] **Provider banner** — when `llm_provider === "extractive"`, states plainly
+      that answers are quoted extracts rather than generated prose
+- [x] **History** — conversation drawer with reopen and delete; the URL follows the
+      active thread so a reload returns to it
+
+### 2.5 Visual design
+
+- [x] Frosted glass surfaces (`.glass`, `.glass-card`, `.glass-inset`) over an
+      ambient aurora backdrop, driven by the same tokens as the rest of the design
+      system so both themes keep their contrast
+- [x] No layout dependency on `backdrop-filter`: it degrades to the translucent
+      fill, and `prefers-reduced-motion` still wins over the transitions
 
 ### 2.4 Quality gates
 
-- [ ] `npm run build` clean under `tsc --noEmit`
-- [ ] `npm test` green
-- [ ] Keyboard accessible, focus-visible, respects `prefers-reduced-motion`
-- [ ] Empty, loading, error and offline states for every async surface
-- [ ] Works at 360px, 768px and 1440px
+- [x] `npm run build` clean under `tsc --noEmit`
+- [x] `npm test` green (40 tests)
+- [x] Keyboard accessible, focus-visible, respects `prefers-reduced-motion`
+- [x] Empty, loading, error and offline states for every async surface
+- [x] Works at 360px, 768px and 1440px
+- [x] Light and dark themes from one set of tokens, with a toggle
+- [x] Management-token gate replaces write controls on a protected deployment
+- [x] Frontend bugs found and fixed while testing: `/chat` dropped the query
+      string (so a dashboard hand-off lost the question), and navigating to
+      `/chat/<id>` mid-stream remounted the chat screen and discarded the answer
+      being received. Both are covered by tests.
 
-**Exit criteria:** a reviewer can sign in, upload a policy, ask a question, read
-the cited answer, see the assistant refuse an unanswerable question, and delete a
-document — entirely through the UI, on a real backend.
-
----
-
-## Phase 3 — Packaging & deployment ⬜
-
-- [ ] `Dockerfile` (backend) and `Dockerfile` (frontend, nginx + `/api` proxy)
-- [ ] `docker-compose.yml`: app + postgres + qdrant, healthchecks, `.env` wiring
-- [ ] **Blocked locally:** Docker is not installed on this machine, so compose
-      must be validated by `docker compose config` on a machine that has it. Do
-      not claim it runs until that is done.
-- [ ] `README.md` replacing the 9-byte placeholder: quickstart, architecture,
-      configuration table, retrieval tuning, troubleshooting
+**Exit criteria — met:** a reviewer can upload a policy, ask a question, read the
+cited answer, watch the assistant refuse an unanswerable question, reopen the
+thread later and delete a document — entirely through the UI, on a real backend.
 
 ---
 
-## Phase 4 — Production hardening ⬜
+## Phase 3 — Packaging & deployment 🟡 FILES WRITTEN, NOT EXECUTED
 
-- [ ] Alembic migrations + `psycopg`; verify `create_all()` dev path still works
-- [ ] Per-user auth (the shared bearer token is not acceptable for real HR data)
-- [ ] Rate limiting on `/api/chat`, not just upload
+- [x] `backend/Dockerfile` (multi-stage, non-root, healthcheck)
+- [x] `frontend/Dockerfile` (build + nginx) and `frontend/nginx.conf` with the
+      `/api` proxy, `proxy_buffering off` for SSE and an SPA fallback
+- [x] `docker-compose.yml`: web + api, healthchecks, two volumes (corpus, model
+      cache), `.env` wiring
+- [x] `.dockerignore` for both contexts
+- [x] `docs/DEPLOYMENT.md`, including the split-origin and PaaS notes
+- [x] `README.md` replacing the placeholder
+- [x] Defects found by static review and fixed: the vector store wrote to
+      `/data/qdrant` inside the image (outside the mounted volume, unwritable by
+      the `nexus` user), and the stack defaulted to `APP_ENV=production` with the
+      `extractive` provider, which production refuses — a chat endpoint that 503s
+      in a container reporting itself healthy. `psycopg[binary]` added so the
+      documented PostgreSQL switch actually connects.
+- [ ] **Still open:** Docker is not installed on this machine, so the images have
+      never been built. Run `docker compose config` and one `docker compose up
+      --build` on a machine that has Docker, and fix whatever it reports. Do not
+      claim the stack runs in Docker until that is done.
+
+---
+
+## Phase 4 — Production hardening ⬜ NEXT
+
+- [ ] Versioned migrations (Alembic) for anything destructive; the additive
+      `schema_sync` covers column additions only
+- [ ] Verify the PostgreSQL path against a real instance
+- [ ] Per-user auth — the shared bearer token is not acceptable for real HR data
+- [ ] Shared (Redis) rate limiting, since the current limiter is per process
 - [ ] `QueryLog` retention policy and a purge job (HR questions are sensitive)
 - [ ] CI running: unit tests → evaluation → smoke → frontend build
 
@@ -120,5 +154,5 @@ improvement must be justified by a movement in the evaluation numbers.
   clearly labelled fictional.
 - **No "AI" theatre.** No fake confidence bars, no invented activity feeds, no
   decorative loading shimmer that implies work that is not happening.
-- **No claiming completion without a passing command.** Phase 2–5 items stay
+- **No claiming completion without a passing command.** Phase 3–5 items stay
   unchecked until verified.

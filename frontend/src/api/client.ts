@@ -33,6 +33,17 @@ export class ApiError extends Error {
 
 const API_PREFIX = "/api";
 
+/**
+ * Optional absolute origin for the API, baked in at build time.
+ *
+ * Empty by default, which keeps every call same-origin: the Vite dev server
+ * proxies `/api` to the backend, and the bundled nginx config does the same in
+ * production. Set `VITE_API_ORIGIN=https://api.example.com` only when the app and
+ * the API are served from genuinely different origins — the backend's
+ * `CORS_ORIGINS` must allow the app's origin in that case.
+ */
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN?.replace(/\/+$/, "") ?? "";
+
 let authToken: string | null = null;
 
 /**
@@ -75,7 +86,7 @@ async function toApiError(response: Response): Promise<ApiError> {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_PREFIX}${path}`, {
+  const response = await fetch(`${API_ORIGIN}${API_PREFIX}${path}`, {
     ...init,
     headers: headers(init.headers as Record<string, string> | undefined),
   });
@@ -135,7 +146,7 @@ export const api = {
       form.append("file", file);
 
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${API_PREFIX}/documents/upload`);
+      xhr.open("POST", `${API_ORIGIN}${API_PREFIX}/documents/upload`);
       Object.entries(headers()).forEach(([key, value]) => xhr.setRequestHeader(key, value));
 
       xhr.upload.addEventListener("progress", (event) => {
@@ -169,7 +180,7 @@ export const api = {
 
   deleteDocument: (id: string) => request<void>(`/documents/${id}`, { method: "DELETE" }),
 
-  documentDownloadUrl: (id: string) => `${API_PREFIX}/documents/${id}/file`,
+  documentDownloadUrl: (id: string) => `${API_ORIGIN}${API_PREFIX}/documents/${id}/file`,
 };
 
 /**
@@ -188,7 +199,7 @@ export async function streamChat(
     signal?: AbortSignal;
   },
 ): Promise<void> {
-  const response = await fetch(`${API_PREFIX}/chat/stream`, {
+  const response = await fetch(`${API_ORIGIN}${API_PREFIX}/chat/stream`, {
     method: "POST",
     headers: headers({ "Content-Type": "application/json" }),
     body: JSON.stringify({ question, conversation_id: conversationId }),

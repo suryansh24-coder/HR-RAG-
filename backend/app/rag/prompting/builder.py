@@ -52,25 +52,11 @@ Style:
 
 USER_PROMPT = "Question: {question}"
 
-NO_CONTEXT_SYSTEM = """You are HR Nexus, the intelligent HR knowledge assistant.
-
-No relevant HR knowledge base passages were retrieved for this question, so you have
-no basis for an answer.
-
-Reply with exactly this sentence and nothing else:
-{no_context}"""
-
 
 @dataclass
 class PromptBundle:
     system: str
     user: str
-
-    def as_messages(self) -> list[dict[str, str]]:
-        return [
-            {"role": "system", "content": self.system},
-            {"role": "user", "content": self.user},
-        ]
 
 
 def format_history(history: list[dict[str, str]], max_turns: int) -> str:
@@ -97,22 +83,3 @@ def build_prompt(
     )
     user = history_block + USER_PROMPT.format(question=question)
     return PromptBundle(system=system, user=user)
-
-
-def build_no_context_prompt(question: str) -> PromptBundle:
-    """Build the prompt used when retrieval found nothing relevant."""
-    return PromptBundle(
-        system=NO_CONTEXT_SYSTEM.format(no_context=settings.NO_CONTEXT_RESPONSE),
-        user=USER_PROMPT.format(question=question),
-    )
-
-
-def build_messages(
-    question: str,
-    context: str,
-    history: list[dict[str, str]] | None = None,
-) -> list[dict[str, str]]:
-    """Backwards-compatible helper returning raw chat-completion messages."""
-    if not context.strip():
-        return build_no_context_prompt(question).as_messages()
-    return build_prompt(question, context, history).as_messages()

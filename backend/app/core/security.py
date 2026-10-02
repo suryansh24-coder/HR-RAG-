@@ -27,7 +27,6 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.exceptions import AppError, ProviderConfigurationError
@@ -254,21 +253,3 @@ async def rate_limit_dependency(request: Request) -> None:
 
 async def upload_rate_limit_dependency(request: Request) -> None:
     _enforce(upload_rate_limiter, request)
-
-
-# --------------------------------------------------------------------------- #
-# Error sanitisation
-# --------------------------------------------------------------------------- #
-_MAX_DETAIL_CHARS = 400
-
-
-def safe_detail(exc: Exception, fallback: str) -> str:
-    """Convert an arbitrary exception into a short, non-leaking message."""
-    message = str(exc).strip() or fallback
-    if len(message) > _MAX_DETAIL_CHARS:
-        message = message[: _MAX_DETAIL_CHARS - 1] + "\u2026"
-    return message
-
-
-def json_error(status_code: int, detail: str, code: str) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"detail": detail, "code": code})

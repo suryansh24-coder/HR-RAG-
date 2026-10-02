@@ -12,7 +12,8 @@ import {
 } from "lucide-react";
 import { ApiError, api } from "../api/client";
 import type { DocumentDetail, DocumentOut, UploadLimits } from "../api/types";
-import { EmptyState, ErrorState, LoadingPanel, Spinner } from "../components/Feedback";
+import { AuthGate, EmptyState, ErrorState, LoadingPanel, Spinner } from "../components/Feedback";
+import { useApp } from "../state/AppContext";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -32,6 +33,11 @@ interface UploadTask {
 }
 
 export function DocumentsPage() {
+  const { auth, refreshAuth } = useApp();
+  // Reading the corpus is always allowed; every write below needs the token, so
+  // the controls are replaced by the gate instead of failing on click.
+  const locked = Boolean(auth?.auth_required) && !auth?.verified;
+
   const [documents, setDocuments] = useState<DocumentOut[] | null>(null);
   const [limits, setLimits] = useState<UploadLimits | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -190,84 +196,97 @@ export function DocumentsPage() {
               : "Loading…"}
           </p>
         </div>
-        <button type="button" className="btn-primary" onClick={() => fileInput.current?.click()}>
-          <Upload className="size-4" aria-hidden="true" />
-          Upload
-        </button>
+        {!locked && (
+          <button type="button" className="btn-primary" onClick={() => fileInput.current?.click()}>
+            <Upload className="size-4" aria-hidden="true" />
+            Upload
+          </button>
+        )}
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="mx-auto flex max-w-4xl flex-col gap-4">
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            className="sr-only"
-            accept={limits?.allowed_extensions.join(",") ?? ".pdf,.txt,.md"}
-            onChange={(event) => {
-              if (event.target.files) void upload(event.target.files);
-              event.target.value = "";
-            }}
-          />
+          {locked ? (
+            <AuthGate onVerified={refreshAuth}>
+              <p className="text-xs text-ink-faint">
+                The uploaded corpus below stays readable — indexing, reindexing and deletion are the
+                operations the token unlocks.
+              </p>
+            </AuthGate>
+          ) : (
+            <>
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                className="sr-only"
+                accept={limits?.allowed_extensions.join(",") ?? ".pdf,.txt,.md"}
+                onChange={(event) => {
+                  if (event.target.files) void upload(event.target.files);
+                  event.target.value = "";
+                }}
+              />
 
-          <div
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDragging(false);
-              if (event.dataTransfer.files.length > 0) void upload(event.dataTransfer.files);
-            }}
-            className={`rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors ${
-              dragging ? "border-accent bg-accent/[0.07]" : "border-edge bg-surface"
-            }`}
-          >
-            <Upload className="mx-auto size-6 text-ink-faint" aria-hidden="true" />
-            <p className="mt-2.5 text-sm text-ink-muted">
-              Drop {limits?.allowed_extensions.join(", ") ?? "PDF, TXT or Markdown"} files here
-            </p>
-            {limits && (
-              <p className="mt-1 text-xs text-ink-faint">Up to {limits.max_upload_size_mb} MB each</p>
-            )}
-          </div>
+              <div
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setDragging(true);
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setDragging(false);
+                  if (event.dataTransfer.files.length > 0) void upload(event.dataTransfer.files);
+                }}
+                className={`rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors ${
+                  dragging ? "border-accent bg-accent/[0.07]" : "border-edge bg-surface"
+                }`}
+              >
+                <Upload className="mx-auto size-6 text-ink-faint" aria-hidden="true" />
+                <p className="mt-2.5 text-sm text-ink-muted">
+                  Drop {limits?.allowed_extensions.join(", ") ?? "PDF, TXT or Markdown"} files here
+                </p>
+                {limits && (
+                  <p className="mt-1 text-xs text-ink-faint">Up to {limits.max_upload_size_mb} MB each</p>
+                )}
+              </div>
 
-          {tasks.length > 0 && (
-            <div className="panel flex flex-col gap-2 p-3">
-              {tasks.map((task) => (
-                <div key={task.id} className="flex items-center gap-3 px-1 py-1 text-sm">
-                  <span className="min-w-0 flex-1 truncate text-ink-muted">{task.filename}</span>
-                  {task.state === "uploading" && (
-                    <>
-                      <span className="h-1.5 w-24 overflow-hidden rounded-full bg-edge">
-                        <span className="block h-full bg-accent transition-all" style={{ width: `${task.progress}%` }} />
-                      </span>
-                      <span className="font-mono text-xs text-ink-faint">{task.progress}%</span>
-                    </>
-                  )}
-                  {task.state === "indexing" && (
-                    <span className="flex items-center gap-1.5 text-xs text-accent-soft">
-                      <Spinner className="size-3" /> indexing
-                    </span>
-                  )}
-                  {task.state === "error" && (
-                    <>
-                      <span className="max-w-[16rem] truncate text-xs text-danger">{task.error}</span>
-                      <button
-                        type="button"
-                        onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))}
-                        aria-label={`Dismiss ${task.filename}`}
-                        className="text-ink-faint hover:text-ink"
-                      >
-                        <X className="size-3.5" />
-                      </button>
-                    </>
-                  )}
+              {tasks.length > 0 && (
+                <div className="panel flex flex-col gap-2 p-3">
+                  {tasks.map((task) => (
+                    <div key={task.id} className="flex items-center gap-3 px-1 py-1 text-sm">
+                      <span className="min-w-0 flex-1 truncate text-ink-muted">{task.filename}</span>
+                      {task.state === "uploading" && (
+                        <>
+                          <span className="h-1.5 w-24 overflow-hidden rounded-full bg-edge">
+                            <span className="block h-full bg-accent transition-all" style={{ width: `${task.progress}%` }} />
+                          </span>
+                          <span className="font-mono text-xs text-ink-faint">{task.progress}%</span>
+                        </>
+                      )}
+                      {task.state === "indexing" && (
+                        <span className="flex items-center gap-1.5 text-xs text-accent-soft">
+                          <Spinner className="size-3" /> indexing
+                        </span>
+                      )}
+                      {task.state === "error" && (
+                        <>
+                          <span className="max-w-[16rem] truncate text-xs text-danger">{task.error}</span>
+                          <button
+                            type="button"
+                            onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))}
+                            aria-label={`Dismiss ${task.filename}`}
+                            className="text-ink-faint hover:text-ink"
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           )}
 
           {error && <ErrorState message={error} onRetry={() => void load()} />}
@@ -281,10 +300,12 @@ export function DocumentsPage() {
                 title="No documents yet"
                 description="Upload a policy, handbook or benefits guide and the assistant will be able to answer questions about it."
                 action={
-                  <button type="button" className="btn-primary" onClick={() => fileInput.current?.click()}>
-                    <Upload className="size-4" aria-hidden="true" />
-                    Upload your first document
-                  </button>
+                  locked ? undefined : (
+                    <button type="button" className="btn-primary" onClick={() => fileInput.current?.click()}>
+                      <Upload className="size-4" aria-hidden="true" />
+                      Upload your first document
+                    </button>
+                  )
                 }
               />
             </div>
@@ -316,45 +337,47 @@ export function DocumentsPage() {
                       {meta.label}
                     </span>
 
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        className="btn-ghost px-2.5 py-1.5"
-                        onClick={() => void reindex(document.id)}
-                        disabled={busyId === document.id}
-                        title="Re-embed this document"
-                      >
-                        <RefreshCw className={`size-3.5 ${busyId === document.id ? "animate-spin" : ""}`} aria-hidden="true" />
-                      </button>
-                      {confirming === document.id ? (
-                        <>
-                          <button
-                            type="button"
-                            className="btn-danger px-2.5 py-1.5"
-                            onClick={() => void remove(document.id)}
-                            disabled={busyId === document.id}
-                          >
-                            Confirm
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-ghost px-2.5 py-1.5"
-                            onClick={() => setConfirming(null)}
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
+                    {!locked && (
+                      <div className="flex items-center gap-1.5">
                         <button
                           type="button"
-                          className="btn-ghost px-2.5 py-1.5 hover:border-danger/40 hover:text-danger"
-                          onClick={() => setConfirming(document.id)}
-                          title="Delete this document and its vectors"
+                          className="btn-ghost px-2.5 py-1.5"
+                          onClick={() => void reindex(document.id)}
+                          disabled={busyId === document.id}
+                          title="Re-embed this document"
                         >
-                          <Trash2 className="size-3.5" aria-hidden="true" />
+                          <RefreshCw className={`size-3.5 ${busyId === document.id ? "animate-spin" : ""}`} aria-hidden="true" />
                         </button>
-                      )}
-                    </div>
+                        {confirming === document.id ? (
+                          <>
+                            <button
+                              type="button"
+                              className="btn-danger px-2.5 py-1.5"
+                              onClick={() => void remove(document.id)}
+                              disabled={busyId === document.id}
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-ghost px-2.5 py-1.5"
+                              onClick={() => setConfirming(null)}
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn-ghost px-2.5 py-1.5 hover:border-danger/40 hover:text-danger"
+                            onClick={() => setConfirming(document.id)}
+                            title="Delete this document and its vectors"
+                          >
+                            <Trash2 className="size-3.5" aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </li>
                 );
               })}

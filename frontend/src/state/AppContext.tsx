@@ -12,6 +12,8 @@ interface AppState {
   offline: boolean;
   error: string | null;
   refreshStats: () => Promise<void>;
+  /** Re-read `/api/auth/status`; called after a token is entered or cleared. */
+  refreshAuth: () => Promise<void>;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -30,6 +32,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setOffline(false);
     } catch {
       // A failed stats refresh is not fatal: individual screens still work.
+    }
+  }, []);
+
+  const refreshAuth = useCallback(async () => {
+    try {
+      setAuth(await api.authStatus());
+    } catch {
+      /* leave the previous value: the management controls are simply hidden */
     }
   }, []);
 
@@ -76,8 +86,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AppState>(
-    () => ({ meta, stats, auth, loading, offline, error, refreshStats }),
-    [meta, stats, auth, loading, offline, error, refreshStats],
+    () => ({ meta, stats, auth, loading, offline, error, refreshStats, refreshAuth }),
+    [meta, stats, auth, loading, offline, error, refreshStats, refreshAuth],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
@@ -92,10 +102,4 @@ export function useApp(): AppState {
   const context = useContext(AppContext);
   if (!context) throw new Error("useApp must be used inside <AppProvider>");
   return context;
-}
-
-/** Convenience: the provider name, or `null` before stats load. */
-export function useProviderName(): string | null {
-  const { stats } = useApp();
-  return stats?.config.llm_provider ?? null;
 }

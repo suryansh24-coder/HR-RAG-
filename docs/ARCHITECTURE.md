@@ -2,25 +2,13 @@
 
 > Intelligent HR Knowledge Assistant
 
-This document describes the current project structure, the proposed (and implemented) architecture, and the data / API flows of **HR Nexus**.
+This document describes how **HR Nexus** is actually built: the components, the
+data and API flows, and the decisions behind them. Every path and flag named here
+exists in the repository.
 
 ---
 
-## 1. Repository State (before implementation)
-
-At the time of writing, the repository contained only a placeholder `README.md` and a git history with a single initial commit. There was **no existing frontend, backend, or dependency manifest**, so the project was built from a clean slate. No existing functionality needed to be preserved.
-
-| Aspect | State |
-| --- | --- |
-| Frontend | None — created from scratch (React + Vite + Tailwind) |
-| Backend | None — created from scratch (FastAPI) |
-| Vector store | None — Qdrant embedded/local mode (configurable to a Qdrant server) |
-| Application DB | None — SQLAlchemy + SQLite locally, PostgreSQL in production |
-| Deployment | None — Docker compose provided, no provider hard-coded |
-
----
-
-## 2. High-Level Architecture
+## 1. High-Level Architecture
 
 ```mermaid
 flowchart TD
@@ -32,8 +20,8 @@ flowchart TD
     RAG --> EMB[Embedding Service<br/>Sentence-Transformers]
     EMB --> VS[Qdrant Vector Store]
 
-    VS --> RET[Retrieval<br/>Top-K + score threshold]
-    RET --> CTX[Context Assembly]
+    VS --> RET[Hybrid retrieval<br/>cosine + lexical, threshold 0.58]
+    RET --> CTX[Context assembly<br/>per-document cap + de-dup]
     CTX --> PB[Prompt Builder]
     PB --> LLM[LLM Provider<br/>OpenAI-compatible / Claude / Gemini / Extractive]
 
@@ -41,7 +29,7 @@ flowchart TD
     OUT --> F
 
     B --> DB[(Relational DB<br/>SQLite / PostgreSQL)]
-    DB --> DOCS[Documents / Conversations / Messages]
+    DB --> DOCS[Documents / Conversations / Messages / Query log]
 
     HR[HR Documents] --> L[Document Loader]
     L --> CLEAN[Text Cleaning + Metadata]
@@ -54,78 +42,103 @@ flowchart TD
 
 | Component | Technology | Responsibility |
 | --- | --- | --- |
-| Frontend | React 18, TypeScript, Vite, Tailwind, Framer Motion, Lucide | Premium glassmorphism chat / dashboard / document-management UI |
-| Backend API | FastAPI + Pydantic + Uvicorn | REST API, validation, error handling, orchestration |
-| RAG Pipeline | Custom implementation (no LangChain/LlamaIndex) | Load → clean → chunk → embed → index → retrieve → prompt → generate |
-| Embeddings | Sentence-Transformers (configurable model) | Document + query embeddings; dimension validated at startup |
-| Vector Store | Qdrant (`qdrant-client`) | Persistent vector storage with metadata payloads |
-| Relational DB | SQLAlchemy 2 (SQLite local / PostgreSQL prod) | Documents, conversations, messages, jobs |
-| LLM | Provider abstraction (HTTP) | Grounded generation; providers swappable without touching RAG |
+| Frontend | React 18, TypeScript, Vite 5, Tailwind 3, Lucide | Chat / documents / dashboard UI, streamed answers, citations, light + dark themes |
+| Backend API | FastAPI + Pydantic v2 + Uvicorn | REST + SSE API, validation, error envelope, orchestration |
+| RAG Pipeline | Custom implementation (no LangChain/LlamaIndex) | load → clean → chunk → embed → index → retrieve → prompt → generate |
+| Embeddings | Sentence-Transformers | Document + query embeddings; model warmed up once at startup, dimension checked against the collection |
+| Vector Store | Qdrant (`qdrant-client`) | Vector storage with metadata payloads; embedded local mode or a Qdrant server |
+| Relational DB | SQLAlchemy 2 (SQLite local / PostgreSQL) | Documents, conversations, messages, query telemetry |
+| Answer providers | Provider abstraction over HTTP | Grounded generation; swappable without touching the RAG pipeline |
 
 ---
 
-## 3. Frontend Architecture
+## 2. Frontend Architecture
 
-Directory: `frontend/`
+Directory: `frontend/src/`
 
 | Path | Responsibility |
 | --- | --- |
-| `src/components/` | Reusable UI primitives (GlassCard, GlassButton, ChatMessage, SourceCard, DocumentCard, UploadZone, Sidebar, Header, StatusIndicator, LoadingIndicator, EmptyState, ErrorState, Markdown, Toast) |
-| `src/layouts/` | App shell, responsive layout with sidebar + content area |
-| `src/pages/` | Dashboard, Chat, Documents, Knowledge (stats/observability) |
-| `src/hooks/` | `useTheme`, `useChat`, `useDocuments`, `useKnowledgeStatus`, `useToast`, `useMediaQuery`, `useReducedMotion` |
-| `src/services/` | typed API client (`api.ts`) + domain services |
-| `src/types/` | shared TypeScript types mirroring backend schemas |
-| `src/utils/` | format helpers, cn() class combiner |
-| `src/animations/` | reusable Framer Motion variants (respecting reduced-motion) |
-| `src/styles/` | Tailwind theme tokens + global CSS |
+| `api/client.ts` | Typed fetch client: all endpoints, upload progress via XHR, SSE parsing, in-memory management token |
+| `api/types.ts` | TypeScript interfaces mirroring the Pydantic schemas |
+| `state/AppContext.tsx` | Bootstrap state: meta, live stats, auth status, offline detection |
+| `hooks/useTheme.ts` | Light/dark preference persisted in `localStorage` and applied to `<html data-theme>` |
+| `components/AppShell.tsx` | Sidebar navigation, connection status, theme toggle, token lock, history drawer |
+| `components/HistoryDrawer.tsx` | Conversation list, reopen, delete |
+| `components/SourceList.tsx` | Citation cards with score bars, chunk metadata and "open the source file" |
+| `components/Feedback.tsx` | Loading, empty, error and management-token gate states |
+| `pages/ChatPage.tsx` | Streaming chat, conversation threading, suggestions, copy-to-clipboard |
+| `pages/DocumentsPage.tsx` | Drag-and-drop upload, background-index polling, chunk preview, reindex, delete |
+| `pages/DashboardPage.tsx` | Real corpus/vector/query metrics, system status, quick questions, recent queries |
+| `index.css` | Design tokens: one ramp of CSS custom properties per theme, the `.panel` / `.btn-*` / `.field` / `.chip` primitives, and the glass layer (`.glass`, `.glass-card`, `.glass-inset`) |
 
 **Key decisions**
 
-- Design tokens are centralized and themed (`design system` below).
-- No API keys live in frontend code; all secrets stay server-side.
-- The frontend never fabricates metrics: every stat is fetched from `/api/rag/stats` or `/api/documents`.
+- Colours come from CSS custom properties, so the dark and light palettes are the
+  same components with a different set of tokens — the toggle changes one
+  attribute on `<html>`.
+- Depth is layered rather than painted: a fixed, non-interactive aurora of three
+  heavily blurred colour fields sits behind the app, and cards are translucent
+  surfaces with `backdrop-filter` plus a specular top edge. Nothing depends on
+  `backdrop-filter` for legibility — it degrades to the translucent fill — and
+  `prefers-reduced-motion` still overrides the transitions.
+- No secret is ever compiled into the bundle. The management token is held in a
+  module variable for the lifetime of the tab; a reload asks again by design.
+- The frontend never fabricates metrics: every number comes from `/api/rag/stats`,
+  `/api/documents` or `/api/rag/queries`.
+- SSE conversation ids are adopted on the first `start` event and reused for
+  later turns, so a thread stays one thread. They are carried in the query string
+  so the route does not change mid-stream — see §6.
 
 ---
 
-## 4. Backend Architecture
+## 3. Backend Architecture
 
 Directory: `backend/app/`
 
 | Path | Responsibility |
 | --- | --- |
-| `core/config.py` | Pydantic settings from environment variables |
-| `core/logging.py` | Structured logging, secret redaction |
-| `core/security.py` | CORS, file validation, safe names, rate-limit scaffolding |
-| `core/exceptions.py` | Domain exceptions + error handling helpers |
-| `database/` | SQLAlchemy engine, session, models |
-| `models/` | Documents, Conversations, Messages |
-| `schemas/` | Pydantic request/response models |
-| `services/` | DocumentService, ChatService, StatsService |
-| `rag/loaders/` | PDF/TXT/MD extraction + cleaning |
-| `rag/chunking/` | Text chunking with size/overlap |
-| `rag/embeddings/` | Embedding service (lazy model load, dimension check) |
-| `rag/vector_store/` | Qdrant client wrapper (create/insert/search/delete/health) |
-| `rag/retrieval/` | Semantic search, thresholding, context assembly |
-| `rag/prompting/` | System prompt + context formatting |
-| `rag/generation/` | LLM provider abstraction + answer parsing |
-| `api/` | FastAPI routers (health, chat, documents, conversations, rag) |
-| `main.py` | Application factory, lifespan, CORS, middleware |
+| `core/config.py` | Pydantic settings from the environment, plus the root `.env` |
+| `core/logging.py` | Structured logging with secret redaction |
+| `core/security.py` | CORS, upload validation, safe filenames, bearer auth, rate limiters |
+| `core/exceptions.py` | Domain exceptions and the `{detail, code}` error envelope |
+| `database/session.py` | Engine, session scope, `init_db()` |
+| `database/schema_sync.py` | Adds columns the models gained since an existing database was created |
+| `models/entities.py` | `Document`, `Conversation`, `Message`, `QueryLog` |
+| `schemas/` | Pydantic request/response models, one module per domain |
+| `services/` | `DocumentService` (lifecycle + indexing), `ChatService` (threads, history, persistence) |
+| `rag/loaders/` | PDF (PyMuPDF) / TXT / Markdown extraction, cleaning, page metadata |
+| `rag/chunking/` | Recursive chunker with configurable size and overlap |
+| `rag/embeddings/` | Lazily loaded embedding model with a cached dimension |
+| `rag/vector_store/` | Qdrant adapter: upsert, search, delete by document, health |
+| `rag/retrieval/` | Hybrid scoring, thresholding, diversification, context assembly |
+| `rag/prompting/` | System instructions, history formatting, prompt bundle |
+| `rag/generation/` | Provider abstraction: extractive, OpenAI-compatible, Anthropic, Gemini |
+| `rag/pipeline.py` | Single entry point used by both the buffered and streaming endpoints |
+| `api/routes/` | `health`, `meta`, `auth`, `chat`, `conversations`, `documents`, `rag` |
+| `main.py` | Application factory, lifespan, request id + latency middleware |
 
 ### Concurrency model
 
-FastAPI runs async; embedding and chunking are CPU-bound and run in a `ThreadPoolExecutor` (`run_in_threadpool`) so the event loop is never blocked blockingly.
+FastAPI serves requests asynchronously; the CPU-bound work (parsing, chunking,
+embedding, Qdrant I/O) is pushed to a worker thread so the event loop keeps
+answering. Indexing after an upload runs as a background task and reports progress
+through the document's `status`, not by blocking the request.
 
-### Startup validation
+### Startup sequence
 
-On startup the app:
-1. Initialises the embedding model (lazy, on first use).
-2. Validates the embedding dimension against the Qdrant collection; recreates the collection if the dimension changed.
-3. Runs a Qdrant health/connectivity check.
+1. Configure logging.
+2. `init_db()` — create missing tables, then add any column the models gained
+   (`app/database/schema_sync.py`).
+3. Instantiate the answer provider so a bad provider name or key fails visibly.
+4. `pipeline.warmup()` — load the embedding model once, then validate the Qdrant
+   collection's name, dimension and distance, recreating it if the embedding
+   dimension changed.
+5. Warn when `AUTH_REQUIRED` is set without a token, and when production runs the
+   extractive provider.
 
 ---
 
-## 5. RAG Architecture
+## 4. RAG Architecture
 
 ```mermaid
 flowchart LR
@@ -137,59 +150,90 @@ flowchart LR
     F --> G[Qdrant upsert with payload]
 
     H[User question] --> I[Embed query]
-    I --> J[Qdrant search: top-k]
-    J --> K[Score threshold filter]
-    K --> L[Context assembly]
-    L --> M[Prompt builder]
-    M --> N[LLM provider]
-    N --> O[Answer + sources]
+    I --> J[Qdrant search: candidates]
+    J --> K[Hybrid score: 0.65 cosine + 0.35 lexical]
+    K --> L[Threshold 0.58 + diversity + per-doc cap]
+    L --> M[Context assembly]
+    M --> N[Prompt builder]
+    N --> O[LLM provider]
+    O --> P[Answer + sources]
 ```
 
-### 5.1 Document ingestion
+### 4.1 Document ingestion
 
-`POST /api/documents/upload` → file persisted to `data/documents` → extraction → cleaning → chunking → embedding → Qdrant upsert. Document record + chunk count stored in relational DB. Status transitions: `pending → processing → ready | failed`.
+`POST /api/documents/upload` validates the file, stores it under `data/documents`
+with a server-generated name, and returns immediately. A background task then
+extracts, cleans, chunks, embeds and upserts into Qdrant while the document moves
+through `pending → processing → ready | failed`. The UI polls the document list
+only while something is still indexing, and the failure reason is persisted on the
+row rather than logged and forgotten.
 
-### 5.2 Chunking
+### 4.2 Chunking
 
-- Recursive splitting on paragraph/sentence boundaries with configurable `CHUNK_SIZE` (default 800) and `CHUNK_OVERLAP` (default 120).
-- Chunk metadata: `document_id`, `filename`, `page`, `chunk_index`, `document_type`, `uploaded_at`.
+- Recursive splitting on paragraph/sentence boundaries with `CHUNK_SIZE` (800) and
+  `CHUNK_OVERLAP` (120).
+- Chunk metadata: `document_id`, `filename`, `page`, `chunk_index`,
+  `document_type`, `uploaded_at`.
 
-### 5.3 Embeddings
+### 4.3 Embeddings
 
-- Same model for documents and queries (requirement).
-- Default model `BAAI/bge-small-en-v1.5` (dimension 384) — small, fast, strong retrieval quality.
-- Embeddings computed in a worker thread; results reused — never recomputed on every request.
+- One model for documents and queries, `BAAI/bge-small-en-v1.5` (dimension 384) by
+  default: small, fast, no external service.
+- The model is loaded once during warm-up; every later request reuses it.
 
-### 5.4 Vector store
+### 4.4 Vector store
 
-- Qdrant via `qdrant-client`. If `QDRANT_URL` is `local`/empty, uses built-in local persistence at `data/qdrant` (perfect for dev/demo without Docker).
-- Collection name configurable (`QDRANT_COLLECTION`), cosine distance, payload metadata.
-- Deleting/re-indexing a document removes its vectors by `document_id` filter.
+- Qdrant via `qdrant-client`. With `QDRANT_URL=local` (or empty) the client uses
+  its embedded persistence under `data/qdrant`, so no service is required.
+- Collection name is configurable (`QDRANT_COLLECTION`, default `hr_documents`),
+  cosine distance, metadata payloads.
+- Re-indexing and deleting a document remove its vectors by a `document_id` filter,
+  so a document can never leave orphaned chunks behind.
 
-### 5.5 Retrieval
+### 4.5 Retrieval
 
-- Query embedding → Qdrant search `top_k` → filter by optional `score_threshold` → build context with source metadata (filename, page, chunk).
-- Retrieval is LLM-agnostic. Latency and scores logged for observability.
+- The vector store returns `RETRIEVAL_CANDIDATES` (30) candidates; each is scored
+  **hybrid** — `HYBRID_ALPHA` (0.65) × cosine similarity + 0.35 × lexical coverage
+  of the question's content words.
+- Chunks below `SCORE_THRESHOLD` (0.58) are discarded, at most
+  `MAX_CHUNKS_PER_DOCUMENT` (2) chunks from one document survive, near-duplicates
+  are dropped, and at most `MAX_CONTEXT_CHUNKS` (6) reach the prompt.
+- The threshold is calibrated, not guessed: the bundled evaluation scores 26
+  answerable questions and 6 out-of-scope ones, and 0.58 sits in the gap between
+  the two distributions. Re-run it after changing the corpus, the chunker or the
+  embedding model.
+- Latency, hit count and top scores are recorded for the dashboard; a full trace is
+  returned when `RAG_DEBUG=true`.
 
-### 5.6 Generation
+### 4.6 Generation
 
-- If no chunks pass the score threshold, the pipeline returns the configurable *insufficient-knowledge* response **without calling the LLM**.
-- Otherwise the prompt builder composes system instructions + retrieved context + question, and the LLM provider generates a grounded answer with inline citations that the frontend renders as source chips.
+- If no chunk passes the threshold, the pipeline returns the configurable
+  insufficient-knowledge response **without calling any model**. There is no
+  prompt that can talk its way into an ungrounded answer.
+- Otherwise the prompt is the system instructions plus the retrieved context plus
+  the question (with up to `HISTORY_TURNS` previous user turns, so "and how many
+  days carry over?" resolves).
+- The extractive provider quotes the retrieved sentences and can therefore run
+  fully offline; the hosted providers generate prose from the same grounded prompt.
 
 ---
 
-## 6. Data Flow
+## 5. Data Flow
 
 1. HR uploads PDF/TXT/MD through the Documents page.
-2. The pipeline extracts, cleans, chunks, embeds and indexes into Qdrant.
+2. The pipeline extracts, cleans, chunks, embeds and indexes into Qdrant; the
+   document reaches `ready` and the UI stops polling.
 3. An employee asks a question in the Chat page.
-4. The chat service embeds the question, retrieves top-k chunks, applies threshold, builds context + prompt.
-5. The LLM writes an answer strictly grounded in context; sources are always real.
-6. The answer + sources stream back to the UI; conversation persisted.
+4. The chat service embeds the question, pulls candidates, applies the hybrid
+   threshold, and assembles context from the surviving chunks.
+5. The provider writes an answer strictly grounded in that context; the sources
+   returned are the exact chunks used.
+6. Stages stream back over SSE (`start → retrieving → sources → generating →
+   complete`) and the conversation is persisted for the history drawer.
 
 ---
 
-## 7. API Flow
+## 6. API Flow
 
 ```mermaid
 sequenceDiagram
@@ -202,78 +246,120 @@ sequenceDiagram
     F->>B: POST /api/chat {question}
     B->>R: chat(question)
     R->>R: embed(question)
-    R->>V: search(top_k)
+    R->>V: search(RETRIEVAL_CANDIDATES)
     V-->>R: hits + scores
-    R->>R: threshold + context
+    R->>R: hybrid score + threshold + context
     R->>L: prompt(messages)
     L-->>R: answer
     R-->>B: Answer + sources
-    B-->>F: {answer, sources, trace}
+    B-->>F: {answer, sources, conversation_id, trace}
 ```
+
+`POST /api/chat/stream` runs the identical pipeline and emits the stages as
+Server-Sent Events, so the buffered and streaming paths cannot drift apart. The
+`complete` event carries the answer, the sources that were actually used, and
+follow-ups derived from those same sources — no second retrieval round-trip. The
+client keeps the thread alive while that happens by putting the returned
+conversation id in the **query string** (`/?conversation=<id>`) rather than the
+path: changing the path re-keys the route element and would remount the chat
+screen mid-answer. `/chat/<id>` remains supported for shared deep links.
 
 ---
 
-## 8. Database
+## 7. Database
 
 | Table | Purpose |
 | --- | --- |
-| `documents` | filename, type, size, status, chunk_count, timestamps, metadata |
-| `conversations` | chat sessions |
-| `messages` | per-conversation user/assistant turns incl. JSON sources |
-| `health_checks` | app health snapshots (optional) |
+| `documents` | filename, type, size, status, error message, chunk/page counts, timestamps, metadata |
+| `conversations` | chat threads with a title derived from the first question |
+| `messages` | per-conversation user/assistant turns, JSON sources, `no_context`, latency |
+| `query_logs` | truncated question preview plus retrieval latency, top score, provider, error |
 
-Vectors are **only** stored in Qdrant. PostgreSQL (or SQLite) never stores embeddings.
+Vectors are **only** stored in Qdrant; the relational database never holds an
+embedding. Only a truncated question preview is logged — never the prompt, the
+retrieved text or the answer.
+
+Schema note: `create_all()` never alters an existing table, so
+`app/database/schema_sync.py` runs at every boot and adds any column the models
+have gained (`ALTER TABLE … ADD COLUMN`, additive only). Destructive changes still
+require a real migration.
 
 ---
 
-## 9. Deployment Architecture
+## 8. Deployment Architecture
 
 ```mermaid
 flowchart LR
-    FE[Frontend<br/>Vercel / Netlify / static host] --> API[Backend<br/>Render / Railway / Fly / AWS]
-    API --> Q[(Qdrant<br/>Cloud or self-hosted)]
-    API --> PG[(PostgreSQL<br/>managed)]
+    FE[Frontend<br/>nginx container or static host] --> API[Backend<br/>uvicorn behind a proxy]
+    API --> Q[(Qdrant<br/>embedded or managed)]
+    API --> PG[(SQLite or PostgreSQL)]
 ```
 
-- Frontend is a static build (`npm run build`).
-- Backend runs `uvicorn app.main:app` behind the host's reverse proxy.
-- Both can be launched locally with Docker Compose (app, qdrant, postgres optional).
-- See `docs/DEPLOYMENT.md` for details.
+- `docker compose up --build` serves the app on <http://localhost:8080> with the API
+  on 8000; state lives in the `api-data` volume.
+- Frontend is a static build (`npm run build`) served by nginx, which also proxies
+  `/api` with `proxy_buffering off` so SSE is not swallowed.
+- Backend runs `uvicorn app.main:app`; put it behind the platform's proxy and set
+  `TRUST_PROXY_HEADERS=true`.
+- `docs/DEPLOYMENT.md` covers single-host, split-origin and platform-specific notes.
 
 ---
 
-## 10. Security Considerations
+## 9. Security Considerations
 
-- Secrets only in environment variables (`QDRANT_API_KEY`, `LLM_API_KEY`, `DATABASE_URL`); `.env` is git-ignored.
-- CORS restricted to `FRONTEND_URL` allow-list.
-- File uploads validated by extension + magic bytes and size limit (`MAX_UPLOAD_SIZE_MB`).
-- Safe server-generated file names (uuid prefix), stored outside web root.
-- API errors sanitised (no stack traces/secret leakage to clients).
+- Secrets only in environment variables (`QDRANT_API_KEY`, `LLM_API_KEY`,
+  `DATABASE_URL`, `API_AUTH_TOKEN`); `.env` is git-ignored and the frontend bundle
+  never contains one.
+- CORS restricted to the `CORS_ORIGINS` allow-list.
+- File uploads validated by extension, content type and size
+  (`MAX_UPLOAD_SIZE_MB`), stored under server-generated names outside the web root.
+- API errors are sanitised: clients get `{detail, code}`, never a stack trace.
 - Logging redacts keys and API secrets.
-- AuthN/AuthZ-ready: role constants and optional API token (`API_AUTH_TOKEN`) enforced on document management endpoints.
-- Rate-limiting scaffold present (`app/core/security.py`) and middleware ready for a Redis-backed limiter in production.
+- Write operations (upload, reindex, delete, conversation changes) require
+  `Authorization: Bearer <API_AUTH_TOKEN>` when a token is configured; reading and
+  asking questions stay open. `AUTH_REQUIRED=true` without a token fails closed.
+- Rate limiting on reads (`RATE_LIMIT_PER_MINUTE`) and uploads
+  (`RATE_LIMIT_UPLOADS_PER_MINUTE`). The limiter is in-process, so a multi-replica
+  deployment needs a shared one.
+- Not implemented: per-user accounts, roles, and audit trails. The token is a single
+  shared secret for a trusted team, not user-level authorisation.
 
 ---
 
-## 11. Observability
+## 10. Observability
 
-- RAG trace payload with retrieval latency, LLM latency, total time, chunk count, and top scores (ids + scores, no raw docs) returned when `RAG_DEBUG=true`.
-- Structured logs with request ids.
-- `/api/rag/stats` reports real document/chunk/vector counts.
-
----
-
-## 12. Testing & QA
-
-- Backend: `pytest` (unit + integration with local Qdrant + extractive LLM provider).
-- Frontend: Vitest + React Testing Library.
-- See `docs/TESTING.md`.
+- RAG trace with retrieval latency, generation latency, total time, hit count and
+  top scores (ids and scores, never raw documents) when `RAG_DEBUG=true`.
+- Structured logs with a request id on every request (`X-Request-ID`).
+- `/api/rag/stats` reports real document, chunk, vector and query counts;
+  `/api/rag/queries` lists recent questions with their outcome.
 
 ---
 
-## 13. Adaptations vs. the original plan
+## 11. Testing & QA
 
-- **SQLite default** for frictionless local dev (no Docker required); `DATABASE_URL` can point at PostgreSQL for production. SQLAlchemy models are portable.
-- **Qdrant local mode** default so the full vector pipeline runs without an external server; `QDRANT_URL` switchable to a Qdrant server/cloud.
-- **Extractive LLM provider** for offline testing/CI: a deterministic, real generator that answers strictly from retrieved context. Production uses a hosted provider; never used as a silent default in production (`APP_ENV=production` rejects it with a clear error).
-- No Docker available on the dev machine → verified locally with pip/node; Docker files provided and validated for syntax.
+- Backend: `pytest` (scoring, chunking, provider and schema-sync unit tests),
+  `python -m evaluation.evaluate_rag` (32-case retrieval and refusal suite) and
+  `python -m tests.smoke` (50 assertions against a live server).
+- Frontend: `npm run typecheck`, `npm test` (40 tests), `npm run build`.
+- `docs/TESTING.md` has the full list and what each layer covers.
+
+---
+
+## 12. Deliberate deviations
+
+- **SQLite by default** so the project runs with no infrastructure;
+  `DATABASE_URL` switches to PostgreSQL. The models are portable and nothing is
+  SQLite-specific.
+- **Embedded Qdrant by default** (`QDRANT_URL=local`) so the full vector pipeline
+  works with no server; point `QDRANT_URL` at Qdrant Cloud or a cluster to move.
+- **Extractive provider as the default answer mode**: deterministic, offline and
+  incapable of inventing anything, which is what makes the test suite meaningful.
+  Production runs that mode only with a loud startup warning — the API reports
+  `features.extractive` so the UI labels the mode instead of implying generated
+  prose.
+- **No LangChain/LangGraph.** The pipeline is ~600 lines of explicit Python, which
+  is what makes the threshold, the refusal path and the streaming stages auditable.
+- **Docker assets are provided but were not executed here** — Docker was not
+  installed on the machine that built this. They are documented in
+  `docs/DEPLOYMENT.md` and should be run once before relying on them.

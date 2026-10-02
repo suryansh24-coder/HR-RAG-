@@ -2,11 +2,13 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   Activity,
+  ArrowRight,
   Database,
   Gauge,
   MessageSquare,
   Search,
   ShieldCheck,
+  Sparkles,
   FileText,
   Layers,
 } from "lucide-react";
@@ -14,6 +16,17 @@ import { api } from "../api/client";
 import type { QueryLogOut } from "../api/types";
 import { ErrorState, LoadingPanel, Skeleton } from "../components/Feedback";
 import { useApp } from "../state/AppContext";
+
+/**
+ * Starter questions. They are prompts only: each one hands off to /chat?q=...,
+ * where it is answered by the same retrieval pipeline as any other question.
+ */
+const QUICK_QUESTIONS = [
+  "How many days of annual leave do I get, and how is carry-over handled?",
+  "What is the reimbursement limit for home office equipment?",
+  "How does the probation period work, and when is it confirmed?",
+  "What is the notice period for a voluntary resignation?",
+];
 
 export function DashboardPage() {
   const { stats, loading, error: appError, refreshStats } = useApp();
@@ -44,12 +57,13 @@ export function DashboardPage() {
   return (
     <div className="h-full overflow-y-auto px-5 py-5">
       <div className="mx-auto flex max-w-5xl flex-col gap-5">
-        <header>
-          <h1 className="text-sm font-semibold text-ink">System overview</h1>
-          <p className="mt-0.5 text-xs text-ink-faint">
-            Every figure below is read live from the API. Nothing here is estimated.
-          </p>
-        </header>
+        <Hero
+          documentsIndexed={stats.documents_indexed}
+          chunksIndexed={stats.chunks_indexed}
+          provider={config.llm_provider}
+          hasKnowledge={stats.chunks_indexed > 0}
+          collectionStatus={collection.status}
+        />
 
         <section aria-label="Key metrics" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
@@ -82,10 +96,37 @@ export function DashboardPage() {
           />
         </section>
 
+        <section aria-label="Quick questions" className="glass p-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="flex items-center gap-2 text-sm font-medium text-ink">
+              <Sparkles className="size-4 text-accent-soft" aria-hidden="true" />
+              Start with a question
+            </h2>
+            <p className="text-xs text-ink-faint">
+              Answered from your own documents, with citations.
+            </p>
+          </div>
+          <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
+            {QUICK_QUESTIONS.map((question) => (
+              <Link
+                key={question}
+                to={`/chat?q=${encodeURIComponent(question)}`}
+                className="glass-card group flex items-start justify-between gap-3 px-4 py-3.5 text-sm text-ink-muted"
+              >
+                <span className="min-w-0">{question}</span>
+                <ArrowRight
+                  className="mt-0.5 size-4 shrink-0 text-ink-faint transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-accent-soft"
+                  aria-hidden="true"
+                />
+              </Link>
+            ))}
+          </div>
+        </section>
+
         {stats.documents_failed > 0 && (
           <div
             role="status"
-            className="rounded-lg border border-danger/30 bg-danger/[0.06] px-4 py-3 text-sm text-danger"
+            className="glass-inset border-danger/30 bg-danger/[0.06] px-4 py-3 text-sm text-danger"
           >
             {stats.documents_failed} document{stats.documents_failed === 1 ? "" : "s"} failed to index.{" "}
             <Link to="/documents" className="underline">
@@ -96,7 +137,7 @@ export function DashboardPage() {
         )}
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <section className="panel p-5" aria-label="Latency">
+          <section className="glass p-5" aria-label="Latency">
             <h2 className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
               <Gauge className="size-4 text-ink-faint" aria-hidden="true" />
               Latency
@@ -120,7 +161,7 @@ export function DashboardPage() {
             )}
           </section>
 
-          <section className="panel p-5" aria-label="Retrieval configuration">
+          <section className="glass p-5" aria-label="Retrieval configuration">
             <h2 className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
               <Search className="size-4 text-ink-faint" aria-hidden="true" />
               Retrieval configuration
@@ -136,7 +177,7 @@ export function DashboardPage() {
             </dl>
           </section>
 
-          <section className="panel p-5" aria-label="Vector store">
+          <section className="glass p-5" aria-label="Vector store">
             <h2 className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
               <Database className="size-4 text-ink-faint" aria-hidden="true" />
               Vector store
@@ -149,7 +190,7 @@ export function DashboardPage() {
             </dl>
           </section>
 
-          <section className="panel p-5" aria-label="Recent questions">
+          <section className="glass p-5" aria-label="Recent questions">
             <h2 className="mb-4 flex items-center gap-2 text-sm font-medium text-ink">
               <Activity className="size-4 text-ink-faint" aria-hidden="true" />
               Recent questions
@@ -192,8 +233,84 @@ export function DashboardPage() {
           {config.llm_provider === "extractive"
             ? "Answers are quoted extracts from your documents, not generated prose."
             : `Answers generated by ${config.llm_model}.`}
+          {" Every figure above is read live from the API."}
         </p>
       </div>
+    </div>
+  );
+}
+
+function Hero({
+  documentsIndexed,
+  chunksIndexed,
+  provider,
+  hasKnowledge,
+  collectionStatus,
+}: {
+  documentsIndexed: number;
+  chunksIndexed: number;
+  provider: string;
+  hasKnowledge: boolean;
+  collectionStatus: string;
+}) {
+  return (
+    <section className="glass glass-sheen relative overflow-hidden px-6 py-7" aria-label="Overview">
+      <div className="relative flex flex-wrap items-end justify-between gap-6">
+        <div className="max-w-xl">
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-accent-soft">
+            HR Nexus
+          </p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-ink">
+            Ask your HR policies anything.
+          </h1>
+          <p className="mt-2.5 text-sm leading-relaxed text-ink-muted">
+            {hasKnowledge
+              ? `${documentsIndexed} document${documentsIndexed === 1 ? "" : "s"} indexed into ${chunksIndexed.toLocaleString()} searchable passages. Answers quote those passages and cite the source, and when nothing relevant exists the assistant says so instead of guessing.`
+              : "Your knowledge base is empty. Upload a policy to get started. Until then the assistant will say it cannot find an answer rather than inventing one."}
+          </p>
+          <div className="mt-5 flex flex-wrap items-center gap-2.5">
+            <Link to="/chat" className="btn-primary">
+              <MessageSquare className="size-4" aria-hidden="true" />
+              Ask a question
+            </Link>
+            <Link to="/documents" className="btn-ghost">
+              <FileText className="size-4" aria-hidden="true" />
+              {hasKnowledge ? "Manage documents" : "Upload a document"}
+            </Link>
+          </div>
+        </div>
+
+        <dl className="grid shrink-0 gap-2.5 sm:min-w-64">
+          {/* `/rag/stats` answered this render, so the API itself is up; the
+              collection status below is the vector store's own health. */}
+          <StatusPill label="API" ok detail="healthy" />
+          <StatusPill
+            label="Answer provider"
+            ok={provider !== "none"}
+            detail={provider === "extractive" ? "extractive (offline)" : provider}
+          />
+          <StatusPill
+            label="Vector store"
+            ok={collectionStatus === "green"}
+            detail={collectionStatus}
+          />
+        </dl>
+      </div>
+    </section>
+  );
+}
+
+function StatusPill({ label, ok, detail }: { label: string; ok: boolean; detail: string }) {
+  return (
+    <div className="glass-inset flex items-center gap-2.5 px-3.5 py-2.5">
+      <span
+        className={`size-1.5 shrink-0 rounded-full ${ok ? "bg-success" : "bg-warning"}`}
+        aria-hidden="true"
+      />
+      <dt className="text-[11px] uppercase tracking-wider text-ink-faint">{label}</dt>
+      <dd className="ml-auto truncate font-mono text-xs text-ink" title={detail}>
+        {detail}
+      </dd>
     </div>
   );
 }
@@ -210,7 +327,7 @@ function StatCard({
   hint: string;
 }) {
   return (
-    <div className="panel p-4">
+    <div className="glass p-4">
       <div className="flex items-center gap-2 text-ink-faint">
         {icon}
         <span className="text-xs font-medium uppercase tracking-wider">{label}</span>

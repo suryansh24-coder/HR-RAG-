@@ -1,0 +1,23 @@
+# Build context hygiene for the API image.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Tests and scratch scripts are not part of the runtime image.
+tests/
+evaluation/
+scripts/
+requirements-dev.txt
+
+# Local state must never be baked into an image.
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.sqlite3
+qdrant_storage/

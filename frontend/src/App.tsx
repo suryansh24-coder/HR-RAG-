@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AppProvider, useApp } from "./state/AppContext";
 import { AppShell } from "./components/AppShell";
 import { ErrorState, LoadingPanel } from "./components/Feedback";
@@ -27,7 +27,7 @@ export function OfflineGate() {
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<ChatPage />} />
-        <Route path="chat" element={<Navigate to="/" replace />} />
+        <Route path="chat" element={<ChatAlias />} />
         <Route path="chat/:conversationId" element={<ChatPage />} />
         <Route path="documents" element={<DocumentsPage />} />
         <Route path="dashboard" element={<DashboardPage />} />
@@ -35,6 +35,16 @@ export function OfflineGate() {
       </Route>
     </Routes>
   );
+}
+
+/**
+ * `/chat` is a friendlier spelling of the index route. The search string is
+ * carried over on purpose: the dashboard links to `/chat?q=…` to hand a question
+ * straight to the composer, and a bare redirect would silently drop it.
+ */
+function ChatAlias() {
+  const { search } = useLocation();
+  return <Navigate to={`/${search}`} replace />;
 }
 
 export function App() {

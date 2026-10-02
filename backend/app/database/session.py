@@ -4,12 +4,13 @@
   database file is anchored to the project root, so the app behaves the same no
   matter which directory uvicorn was started from.
 * **PostgreSQL** is supported for production via ``DATABASE_URL``
-  (``postgresql+psycopg://user:pass@host:5432/db``); install the driver with
-  ``pip install -r requirements.txt`` (it includes ``psycopg[binary]``).
+  (``postgresql+psycopg://user:pass@host:5432/db``); the driver ships in
+  ``requirements.txt``, so changing the URL is the only step required.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 
@@ -18,6 +19,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import PROJECT_ROOT, settings
+
+logger = logging.getLogger(__name__)
 
 SQLITE_PREFIX = "sqlite:///./"
 
@@ -96,24 +99,19 @@ def session_scope() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """Create missing tables.
+    """Create missing tables, then add any column the models gained since.
 
-    Alembic owns schema migrations (see ``alembic/``); this function only
-    guarantees a usable schema for first-run local development and tests.
+    ``create_all`` only creates tables, so a database written by an older version
+    of the app would keep its old shape and fail at query time on a newer column.
+    ``sync_schema`` closes that gap with additive ``ADD COLUMN`` statements only —
+    see :mod:`app.database.schema_sync` for what it deliberately refuses to do.
     """
     from app.models import entities  # noqa: F401  (register mappers)
 
     Base.metadata.create_all(bind=engine)
 
+    from app.database.schema_sync import sync_schema
 
-def database_url_display() -> str:
-    """Human-readable database target with credentials stripped."""
-    url = engine.url.render_as_string(hide_password=True)
-    return url.replace(str(PROJECT_ROOT), "<project>")
-
-
-def drop_db() -> None:
-    """Drop all tables (tests only)."""
-    from app.models import entities  # noqa: F401
-
-    Base.metadata.drop_all(bind=engine)
+    applied = sync_schema(engine)
+    if applied:
+        logger.info("Applied %d schema column(s) to an existing database", len(applied))

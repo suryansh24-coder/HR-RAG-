@@ -19,8 +19,6 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-_MAX_SAMPLES = 50
-
 
 @dataclass
 class RAGMetrics:

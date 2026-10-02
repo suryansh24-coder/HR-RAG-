@@ -27,19 +27,16 @@ frontend/coverage/
 *.tsbuildinfo
 
 # --- Application data ------------------------------------------------------
-# Uploaded documents, processed text, the local Qdrant store and the SQLite
-# database are runtime artefacts, not source. Users upload their own HR policies
-# here, so the whole directory is ignored by default...
+# Uploaded documents, the local Qdrant store and the SQLite database are runtime
+# artefacts, not source. Users upload their own HR policies here, so the whole
+# directory is ignored by default...
 data/documents/*
 !data/documents/fictional_*
-!data/documents/.gitkeep
-data/processed/
 data/qdrant/
 data/*.db
 data/*.db-shm
 data/*.db-wal
 !data/documents/.gitkeep
-!data/processed/.gitkeep
 
 # --- Secrets ---------------------------------------------------------------
 *.pem

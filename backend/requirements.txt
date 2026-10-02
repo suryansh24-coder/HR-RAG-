@@ -11,3 +11,7 @@ sqlalchemy>=2.0
 pytest>=8.0
 pytest-asyncio>=0.23
 python-dotenv>=1.0
+# Driver for DATABASE_URL=postgresql+psycopg://… (SQLite needs none).
+# Included by default so switching DATABASE_URL to managed PostgreSQL is the only
+# change required for a hosted deployment — see docs/DEPLOYMENT.md.
+psycopg[binary]>=3.2

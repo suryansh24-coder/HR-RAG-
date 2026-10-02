@@ -1,5 +1,20 @@
+import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { BarChart3, FileText, MessageSquare, Wifi, WifiOff } from "lucide-react";
+import {
+  BarChart3,
+  FileText,
+  History,
+  Lock,
+  MessageSquare,
+  Moon,
+  Sun,
+  Unlock,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
+import { HistoryDrawer } from "./HistoryDrawer";
+import { useTheme } from "../hooks/useTheme";
+import { getAuthToken, setAuthToken } from "../api/client";
 import { useApp } from "../state/AppContext";
 
 const NAV = [
@@ -9,13 +24,20 @@ const NAV = [
 ];
 
 export function AppShell() {
-  const { offline, loading, stats } = useApp();
+  const { offline, loading, stats, auth, refreshAuth } = useApp();
+  const { theme, toggle } = useTheme();
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  async function releaseToken() {
+    setAuthToken(null);
+    await refreshAuth();
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col lg:flex-row">
-      <aside className="flex shrink-0 flex-row items-center justify-between gap-3 border-b border-edge bg-surface px-4 py-3 lg:h-full lg:w-60 lg:flex-col lg:items-stretch lg:justify-start lg:border-b-0 lg:border-r lg:py-5">
+      <aside className="flex shrink-0 flex-row items-center justify-between gap-3 border-b border-edge bg-canvas/70 px-4 py-3 backdrop-blur-xl lg:h-full lg:w-60 lg:flex-col lg:items-stretch lg:justify-start lg:border-b-0 lg:border-r lg:py-5">
         <div className="flex items-center gap-2.5">
-          <div className="flex size-8 items-center justify-center rounded-lg bg-accent text-white">
+          <div className="flex size-8 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-accent-deep text-white shadow-glow">
             <span className="text-sm font-bold">H</span>
           </div>
           <div className="leading-tight">
@@ -42,6 +64,14 @@ export function AppShell() {
               {label}
             </NavLink>
           ))}
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(true)}
+            className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-ink-muted transition-colors hover:bg-surface-raised hover:text-ink"
+          >
+            <History className="size-4 shrink-0" aria-hidden="true" />
+            History
+          </button>
         </nav>
 
         <div className="hidden lg:mt-auto lg:block">
@@ -51,13 +81,60 @@ export function AppShell() {
               {stats.documents_indexed} documents · {stats.chunks_indexed} chunks indexed
             </p>
           )}
+
+          <div className="mt-4 flex items-center gap-1.5 px-3">
+            <IconButton
+              label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              onClick={toggle}
+            >
+              {theme === "dark" ? <Sun className="size-3.5" aria-hidden="true" /> : <Moon className="size-3.5" aria-hidden="true" />}
+            </IconButton>
+
+            {auth?.auth_required &&
+              (auth.verified && getAuthToken() ? (
+                <IconButton label="Release the management token" onClick={() => void releaseToken()}>
+                  <Lock className="size-3.5" aria-hidden="true" />
+                </IconButton>
+              ) : (
+                <IconButton label="Management token required" disabled>
+                  <Unlock className="size-3.5" aria-hidden="true" />
+                </IconButton>
+              ))}
+          </div>
         </div>
       </aside>
 
       <main className="min-h-0 min-w-0 flex-1">
         <Outlet />
       </main>
+
+      <HistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} />
     </div>
+  );
+}
+
+function IconButton({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      className="rounded-lg border border-edge bg-surface-raised p-2 text-ink-muted transition-colors hover:border-edge-strong hover:text-ink disabled:opacity-40"
+    >
+      {children}
+    </button>
   );
 }
 

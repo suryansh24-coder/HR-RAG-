@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -59,7 +60,7 @@ async def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> ChatRespo
         message_id=assistant.id,
         retrieval_hits=result.retrieval_hits,
         trace=result.trace,
-        total_latency_ms=result.trace.get("total_latency_ms") if result.trace else None,
+        total_latency_ms=result.latency_ms,
     )
 
 
@@ -89,6 +90,23 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
+def chat_result_from_event(event: StreamEvent) -> ChatResult:
+    """Rebuild the pipeline result carried by a ``complete`` stream event.
+
+    Used both to derive follow-ups for the client and to persist the turn after
+    the response has finished, so the streamed and buffered paths stay identical.
+    """
+    return ChatResult(
+        answer=str(event.data.get("answer", "")),
+        sources=list(event.data.get("sources", [])),
+        context_used=bool(event.data.get("context_used")),
+        no_context=bool(event.data.get("no_context")),
+        retrieval_hits=int(event.data.get("retrieval_hits", 0) or 0),
+        trace=dict(event.data.get("trace", {})),
+        latency_ms=event.data.get("total_latency_ms"),
+    )
+
+
 def persist_turn(conversation_id: str, question: str, result: ChatResult) -> None:
     """Persist a streamed turn in its own session (safe after the response)."""
     with session_scope() as db:
@@ -113,7 +131,7 @@ async def chat_stream(payload: ChatRequest, request: Request) -> StreamingRespon
     * ``retrieving``  — embedding the question and searching the vector store
     * ``sources``     — the citations that were actually retrieved
     * ``generating``  — the LLM is producing the grounded answer
-    * ``complete``    — final answer, sources and (debug) trace
+    * ``complete``    — final answer, sources, follow-ups and (debug) trace
     * ``error``       — a sanitised failure message
     """
 
@@ -141,6 +159,17 @@ async def chat_stream(payload: ChatRequest, request: Request) -> StreamingRespon
                     break
                 if event.stage == "complete":
                     completed = event
+                # Follow-ups are derived from the sources that were really
+                # retrieved, so the streaming client gets the same suggestions the
+                # buffered /chat endpoint returns — no second retrieval round-trip.
+                if event.stage == "complete" and payload.include_suggestions:
+                    suggestions = chat_service.suggest_follow_ups(
+                        payload.question, chat_result_from_event(event)
+                    )
+                    if suggestions:
+                        event = replace(
+                            event, data={**event.data, "suggestions": suggestions}
+                        )
                 yield _sse(event.stage, {"message": event.message, **event.data})
         except AppError as exc:
             logger.warning("Stream error: %s", exc.detail)
@@ -160,14 +189,7 @@ async def chat_stream(payload: ChatRequest, request: Request) -> StreamingRespon
                     persist_turn,
                     conversation_id,
                     payload.question,
-                    ChatResult(
-                        answer=str(completed.data.get("answer", "")),
-                        sources=list(completed.data.get("sources", [])),
-                        context_used=bool(completed.data.get("context_used")),
-                        no_context=bool(completed.data.get("no_context")),
-                        retrieval_hits=int(completed.data.get("retrieval_hits", 0) or 0),
-                        trace=dict(completed.data.get("trace", {})),
-                    ),
+                    chat_result_from_event(completed),
                 )
 
     return StreamingResponse(

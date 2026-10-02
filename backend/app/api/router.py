@@ -39,6 +39,11 @@ def api_meta() -> dict:
             "debug": settings.RAG_DEBUG,
             "database": settings.DATABASE_URL.split("://", 1)[0],
             "qdrant_mode": "local" if settings.qdrant_is_local else "server",
+            # Which provider is actually answering. `extractive` means answers are
+            # verbatim quotes from the retrieved chunks and no model is called, so
+            # the UI labels that mode instead of implying generated prose.
+            "llm_provider": settings.LLM_PROVIDER,
+            "extractive": settings.LLM_PROVIDER == "extractive",
         },
     }
 

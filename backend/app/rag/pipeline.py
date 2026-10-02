@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -30,7 +29,7 @@ from app.rag.embeddings.service import embedding_service
 from app.rag.generation.llm import LLMProvider, provider_factory
 from app.rag.loaders.base import ExtractedDocument
 from app.rag.metrics import rag_metrics
-from app.rag.prompting.builder import build_no_context_prompt, build_prompt
+from app.rag.prompting.builder import build_prompt
 from app.rag.retrieval.service import (
     RetrievedChunk,
     RetrievalResult,
@@ -69,6 +68,8 @@ class ChatResult:
     no_context: bool = False
     retrieval_hits: int = 0
     trace: dict[str, Any] = field(default_factory=dict)
+    # Measured end to end, reported whether or not RAG_DEBUG exposes the trace.
+    latency_ms: float | None = None
 
 
 @dataclass
@@ -248,6 +249,7 @@ class RAGPipeline:
                     context_used=False,
                     no_context=True,
                     retrieval_hits=0,
+                    latency_ms=total_ms,
                     trace=self._trace(
                         {
                             **retrieval.trace(),
@@ -279,6 +281,7 @@ class RAGPipeline:
                 context_used=True,
                 no_context=False,
                 retrieval_hits=len(retrieval.chunks),
+                latency_ms=total_ms,
                 trace=self._trace(
                     {
                         **retrieval.trace(),
@@ -348,6 +351,7 @@ class RAGPipeline:
                         "no_context": True,
                         "context_used": False,
                         "retrieval_hits": 0,
+                        "total_latency_ms": total_ms,
                         "trace": self._trace(
                             {
                                 **retrieval.trace(),
@@ -406,6 +410,7 @@ class RAGPipeline:
                     "no_context": False,
                     "context_used": True,
                     "retrieval_hits": len(sources),
+                    "total_latency_ms": total_ms,
                     "trace": self._trace(
                         {
                             **retrieval.trace(),
@@ -442,15 +447,6 @@ class RAGPipeline:
     # -- maintenance ------------------------------------------------------
     async def delete_document(self, document_id: str) -> int:
         return await run_in_threadpool(vector_store.delete_document, document_id)
-
-    def stats(self) -> dict[str, Any]:
-        return {
-            "collection": vector_store.collection_info(),
-            "mode": vector_store.mode,
-        }
-
-    def new_trace_id(self) -> str:
-        return uuid.uuid4().hex[:12]
 
     @staticmethod
     def _trace(trace: dict[str, Any]) -> dict[str, Any]:

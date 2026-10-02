@@ -42,7 +42,6 @@ class Settings(BaseSettings):
 
     # --- Storage -------------------------------------------------------
     DATA_DIR: Path = PROJECT_ROOT / "data" / "documents"
-    PROCESSED_DIR: Path = PROJECT_ROOT / "data" / "processed"
     QDRANT_PATH: Path = PROJECT_ROOT / "data" / "qdrant"
     MAX_UPLOAD_SIZE_MB: int = 20
 

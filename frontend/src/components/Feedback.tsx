@@ -80,10 +80,22 @@ export function LoadingPanel({ label = "Loading" }: { label?: string }) {
 }
 
 /**
- * Shown when the API demands a management token. The token is held in memory
- * only — see `setAuthToken` — so it is intentionally cleared on reload.
+ * Shown when the API demands a management token.
+ *
+ * The token lives in memory only — see `setAuthToken` in `api/client` — so it is
+ * intentionally dropped on reload. On success the gate calls `onVerified`
+ * instead of reloading the page, so the caller can simply re-render its
+ * protected controls; reloading would also throw away the in-memory token and
+ * send the user straight back to this form.
  */
-export function AuthGate({ children }: { children: ReactNode }) {
+export function AuthGate({
+  onVerified,
+  children,
+}: {
+  /** Called once the server has accepted the token. */
+  onVerified: () => void | Promise<void>;
+  children?: ReactNode;
+}) {
   return (
     <div className="mx-auto max-w-md px-4 py-20">
       <div className="panel flex flex-col gap-4 p-7">
@@ -95,32 +107,33 @@ export function AuthGate({ children }: { children: ReactNode }) {
           This deployment has <code className="font-mono text-ink">MANAGEMENT_TOKEN</code> enabled, so
           document and conversation changes need a bearer token. Reading questions does not.
         </p>
-        <TokenForm />
+        <TokenForm onVerified={onVerified} />
         {children}
       </div>
     </div>
   );
 }
 
-function TokenForm() {
+function TokenForm({ onVerified }: { onVerified: () => void | Promise<void> }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
 
   async function verify(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    setChecking(true);
     setAuthToken(value);
     try {
       const status = await api.authStatus();
-      if (status.verified) {
-        window.location.reload();
-      } else {
-        setAuthToken(null);
-        setError("That token was not accepted.");
-      }
-    } catch {
+      if (!status.verified) throw new Error("That token was not accepted.");
+      setValue("");
+      await onVerified();
+    } catch (cause) {
       setAuthToken(null);
-      setError("Could not reach the API to verify the token.");
+      setError(cause instanceof Error ? cause.message : "Could not reach the API to verify the token.");
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -143,8 +156,9 @@ function TokenForm() {
           {error}
         </p>
       )}
-      <button type="submit" className="btn-primary">
-        Unlock
+      <button type="submit" className="btn-primary" disabled={checking || !value.trim()}>
+        {checking ? <Spinner className="size-4" /> : null}
+        {checking ? "Verifying…" : "Unlock"}
       </button>
     </form>
   );

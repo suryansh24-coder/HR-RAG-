@@ -58,6 +58,16 @@ async def lifespan(app: FastAPI):
             "(upload, re-index, delete) will return 503 until a token is configured."
         )
 
+    if settings.LLM_PROVIDER == "extractive" and settings.APP_ENV == "production":
+        # Not fatal: extractive mode is a legitimate, fully offline configuration
+        # and it never invents anything. It must simply never be mistaken for a
+        # generated answer, so say so loudly at boot.
+        logger.warning(
+            "LLM_PROVIDER=extractive in production: answers are verbatim quotes from "
+            "the retrieved chunks and no language model is called. Set LLM_PROVIDER "
+            "and LLM_API_KEY if you intended generated answers."
+        )
+
     yield
 
     from app.rag.vector_store.qdrant_store import vector_store

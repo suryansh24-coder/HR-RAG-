@@ -3,8 +3,78 @@
 @tailwind utilities;
 
 @layer base {
+  /* ------------------------------------------------------------------ *
+   * Design tokens
+   *
+   * Two palettes, one set of names. The dark ramp is the default because
+   * it is the product's native surface; `data-theme="light"` re-points
+   * every token so the entire UI switches without a component changing.
+   * Values are space-separated RGB channels so Tailwind's opacity
+   * modifiers keep working (`bg-accent/12`).
+   * ------------------------------------------------------------------ */
   :root {
     color-scheme: dark;
+
+    --color-canvas: 11 17 32;
+    --color-surface: 17 26 46;
+    --color-surface-raised: 22 34 58;
+    --color-surface-sunken: 13 21 38;
+    --color-edge: 34 48 77;
+    --color-edge-strong: 49 66 106;
+    --color-ink: 232 238 251;
+    --color-ink-muted: 148 166 200;
+    --color-ink-faint: 100 118 155;
+    --color-accent: 79 140 255;
+    --color-accent-soft: 138 180 255;
+    --color-accent-deep: 31 79 191;
+    --color-success: 52 211 153;
+    --color-warning: 251 191 36;
+    --color-danger: 248 113 113;
+
+    --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+    --shadow-backdrop: rgba(3, 7, 18, 0.62);
+
+    /* Depth: glass surfaces sit on top of the ambient aurora below. */
+    --glass-bg: rgba(255, 255, 255, 0.055);
+    --glass-bg-strong: rgba(255, 255, 255, 0.085);
+    --glass-edge: rgba(255, 255, 255, 0.11);
+    --glass-highlight: rgba(255, 255, 255, 0.22);
+    --aurora-a: rgba(79, 140, 255, 0.28);
+    --aurora-b: rgba(129, 96, 255, 0.2);
+    --aurora-c: rgba(52, 211, 153, 0.13);
+    --shadow-lift: 0 1px 1px rgba(0, 0, 0, 0.28), 0 18px 44px -22px rgba(0, 0, 0, 0.85);
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+
+    --color-canvas: 244 246 251;
+    --color-surface: 255 255 255;
+    --color-surface-raised: 247 249 253;
+    --color-surface-sunken: 238 241 248;
+    --color-edge: 221 227 239;
+    --color-edge-strong: 195 204 223;
+    --color-ink: 16 24 40;
+    --color-ink-muted: 71 84 103;
+    --color-ink-faint: 91 106 133;
+    --color-accent: 37 99 235;
+    --color-accent-soft: 29 78 216;
+    --color-accent-deep: 30 64 175;
+    --color-success: 5 150 105;
+    --color-warning: 180 83 9;
+    --color-danger: 220 38 38;
+
+    --shadow-panel: 0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px -12px rgba(15, 23, 42, 0.16);
+    --shadow-backdrop: rgba(15, 23, 42, 0.35);
+
+    --glass-bg: rgba(255, 255, 255, 0.72);
+    --glass-bg-strong: rgba(255, 255, 255, 0.86);
+    --glass-edge: rgba(15, 23, 42, 0.09);
+    --glass-highlight: rgba(255, 255, 255, 0.9);
+    --aurora-a: rgba(37, 99, 235, 0.16);
+    --aurora-b: rgba(124, 92, 235, 0.13);
+    --aurora-c: rgba(5, 150, 105, 0.09);
+    --shadow-lift: 0 1px 2px rgba(15, 23, 42, 0.06), 0 20px 44px -24px rgba(15, 23, 42, 0.32);
   }
 
   html,
@@ -16,6 +86,30 @@
   body {
     @apply bg-canvas text-ink font-sans antialiased;
     font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  /* The ambient backdrop every page sits on: three very wide, heavily blurred
+     colour fields over the flat canvas. Fixed and non-interactive, so it never
+     affects layout or scroll. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: -20%;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(46rem 30rem at 12% -6%, var(--aurora-a), transparent 62%),
+      radial-gradient(38rem 26rem at 88% 4%, var(--aurora-b), transparent 60%),
+      radial-gradient(52rem 34rem at 62% 108%, var(--aurora-c), transparent 64%);
+    filter: blur(14px);
+  }
+
+  /* Everything above the backdrop. `#root` is the stacking context. */
+  #root {
+    position: relative;
+    z-index: 1;
+    isolation: isolate;
   }
 
   /* Keyboard users must always be able to see where they are. */
@@ -45,6 +139,71 @@
 @layer components {
   .panel {
     @apply bg-surface border border-edge rounded-xl shadow-panel;
+  }
+
+  /* Frosted surface: translucent fill + backdrop blur + a top edge highlight,
+     so cards read as glass layered over the aurora rather than flat fills.
+     `-webkit-backdrop-filter` is listed separately because Safari still needs
+     the unprefixed property spelled out by Tailwind's `backdrop-blur`. */
+  .glass {
+    @apply rounded-2xl border shadow-lift;
+    border-color: var(--glass-edge);
+    background-color: var(--glass-bg);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    backdrop-filter: blur(16px) saturate(150%);
+    transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 0.25s ease, background-color 0.25s ease,
+      box-shadow 0.25s ease;
+  }
+
+  /* The 1px specular line along a glass edge. */
+  .glass-sheen {
+    position: relative;
+  }
+  .glass-sheen::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      to bottom,
+      var(--glass-highlight),
+      transparent 42%
+    );
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: 0.5;
+  }
+
+  /* Interactive glass card (quick questions, stat tiles). */
+  .glass-card {
+    @apply glass glass-sheen;
+  }
+  .glass-card:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--color-accent) 42%, transparent);
+    background-color: var(--glass-bg-strong);
+  }
+  .glass-card:active {
+    transform: translateY(0);
+  }
+
+  .glass-inset {
+    @apply rounded-xl border;
+    border-color: var(--glass-edge);
+    background-color: var(--glass-bg);
+    -webkit-backdrop-filter: blur(10px) saturate(140%);
+    backdrop-filter: blur(10px) saturate(140%);
+  }
+
+  /* Panel variant used by the app shell and sticky chrome. */
+  .panel-glass {
+    @apply glass;
+    background-color: var(--glass-bg-strong);
   }
 
   .btn {

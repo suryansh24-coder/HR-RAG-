@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="HR Nexus">
+  <defs>
+    <linearGradient id="hrn-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2b4d" />
+      <stop offset="1" stop-color="#0b1120" />
+    </linearGradient>
+    <linearGradient id="hrn-mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8ab4ff" />
+      <stop offset="1" stop-color="#4f8cff" />
+    </linearGradient>
+  </defs>
+
+  <rect width="128" height="128" rx="28" fill="url(#hrn-bg)" />
+  <rect x="1.5" y="1.5" width="125" height="125" rx="26.5" fill="none" stroke="#223055" stroke-width="3" />
+
+  <!-- Document: the grounding the assistant must not answer without -->
+  <rect x="30" y="26" width="52" height="66" rx="8" fill="#111a2e" stroke="url(#hrn-mark)" stroke-width="3" />
+  <g stroke="#4f8cff" stroke-width="4" stroke-linecap="round" opacity="0.75">
+    <line x1="40" y1="46" x2="72" y2="46" />
+    <line x1="40" y1="60" x2="64" y2="60" />
+    <line x1="40" y1="74" x2="68" y2="74" />
+  </g>
+
+  <!-- Nexus node: the document is connected, not guessed -->
+  <circle cx="90" cy="88" r="16" fill="url(#hrn-mark)" />
+  <circle cx="90" cy="88" r="6" fill="#0b1120" />
+  <path d="M74 76 L66 68" stroke="url(#hrn-mark)" stroke-width="4" stroke-linecap="round" />
+</svg>

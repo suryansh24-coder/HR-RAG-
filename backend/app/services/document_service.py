@@ -145,14 +145,6 @@ class DocumentService:
             except Exception:  # noqa: BLE001 - status and error are persisted on the row
                 pass
 
-    @staticmethod
-    def reindex_in_background(document_id: str) -> None:
-        with session_scope() as db:
-            try:
-                asyncio.run(DocumentService().reindex(db, document_id))
-            except Exception:  # noqa: BLE001
-                pass
-
     # ------------------------------------------------------------------ #
     # Reads
     # ------------------------------------------------------------------ #
@@ -255,10 +247,11 @@ class DocumentService:
         return await self.process(db, document_id)
 
     def reindex_in_background(self, document_id: str) -> None:
+        """Re-index in a fresh session so the request never blocks on embedding."""
         with session_scope() as db:
             try:
                 asyncio.run(DocumentService().reindex(db, document_id))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 - status and error are persisted on the row
                 pass
 
 

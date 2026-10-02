@@ -17,6 +17,9 @@ export interface MetaFeatures {
   debug: boolean;
   database: string;
   qdrant_mode: string;
+  /** Which provider actually answers; "extractive" means quoted, not generated. */
+  llm_provider?: string;
+  extractive?: boolean;
   [key: string]: unknown;
 }
 

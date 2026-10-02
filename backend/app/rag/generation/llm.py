@@ -27,24 +27,6 @@ class LLMProvider(ABC):
         """Return the generated assistant text for the given messages."""
 
 
-class LLMResult:
-    __slots__ = ("text", "latency_ms", "provider", "model", "error")
-
-    def __init__(
-        self,
-        text: str = "",
-        provider: str = "",
-        model: str = "",
-        latency_ms: float = 0.0,
-        error: str | None = None,
-    ) -> None:
-        self.text = text
-        self.provider = provider
-        self.model = model
-        self.latency_ms = latency_ms
-        self.error = error
-
-
 def provider_factory() -> LLMProvider:
     provider = (settings.LLM_PROVIDER or "").strip().lower()
 

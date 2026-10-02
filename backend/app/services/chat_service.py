@@ -11,10 +11,10 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
-from app.models import Conversation, Document, Message, QueryLog
+from app.models import Conversation, Message, QueryLog
 from app.rag.pipeline import ChatResult, pipeline
 from app.schemas.chat import SourceOut
-from app.services.document_service import STATUS_READY, document_service
+from app.services.document_service import document_service
 
 logger = get_logger(__name__)
 
@@ -315,22 +315,6 @@ class StatsService:
                 select(QueryLog).order_by(QueryLog.created_at.desc()).limit(cap)
             )
         )
-
-    def indexed_documents(self, db: Session) -> int:
-        return (
-            db.scalar(
-                select(func.count())
-                .select_from(Document)
-                .where(Document.status == STATUS_READY)
-            )
-            or 0
-        )
-
-    def average_top_score(self, db: Session) -> float | None:
-        value = db.scalar(
-            select(func.avg(QueryLog.top_score)).where(QueryLog.top_score.isnot(None))
-        )
-        return round(float(value), 4) if value is not None else None
 
 
 stats_service = StatsService()

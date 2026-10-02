@@ -12,8 +12,6 @@ for the real ``processing → ready | failed`` transition.
 
 from __future__ import annotations
 
-import asyncio
-
 from fastapi import (
     APIRouter,
     BackgroundTasks,

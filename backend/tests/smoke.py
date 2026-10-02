@@ -167,6 +167,12 @@ def main() -> int:
             all({"filename", "page", "chunk_id"} <= set(s) for s in chat.get("sources") or []),
             response.text,
         )
+        latency = chat.get("total_latency_ms")
+        check(
+            "chat reports a measured latency without RAG_DEBUG",
+            isinstance(latency, (int, float)) and latency > 0,
+            f"total_latency_ms={latency!r}",
+        )
 
         print("\n--- refusal ---")
         response = client.post(
@@ -176,6 +182,11 @@ def main() -> int:
         refused = response.json()
         check("out-of-scope question is refused", bool(refused.get("no_context")), response.text)
         check("refusal returns no sources", not refused.get("sources"), response.text)
+        check(
+            "refusal still reports a latency",
+            isinstance(refused.get("total_latency_ms"), (int, float)),
+            response.text,
+        )
 
         print("\n--- streaming ---")
         with client.stream(
@@ -214,6 +225,12 @@ def main() -> int:
             bool(complete.get("sources")),
             str(complete)[:300],
         )
+        check(
+            "streamed complete event carries grounded follow-ups",
+            bool(complete.get("suggestions")),
+            str(complete)[:300],
+        )
+
 
         print("\n--- conversations ---")
         response = client.get("/api/conversations")

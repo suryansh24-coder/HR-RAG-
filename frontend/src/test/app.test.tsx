@@ -1,12 +1,13 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OfflineGate } from "../App";
 import { AppProvider } from "../state/AppContext";
 import { AppShell } from "../components/AppShell";
 import { ChatPage } from "../pages/ChatPage";
 import { DocumentsPage } from "../pages/DocumentsPage";
+import { SourceCard } from "../components/SourceList";
 import { setAuthToken } from "../api/client";
 
 const meta = {
@@ -84,8 +85,14 @@ function routeFetch(body: unknown, init: { status?: number } = {}): Response {
   });
 }
 
+/** Installs a stub `fetch` that answers the API routes the app boots with. */
 function installFetch(overrides: Record<string, () => Response> = {}) {
-  const handler = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  vi.stubGlobal("fetch", vi.fn(makeHandler(overrides)));
+}
+
+/** Builds the route handler without installing it, so a test can wrap it. */
+function makeHandler(overrides: Record<string, () => Response> = {}) {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === "string" ? input : input.toString();
     const path = url.split("?")[0] ?? url;
 
@@ -113,7 +120,12 @@ function installFetch(overrides: Record<string, () => Response> = {}) {
     void init;
     return new Response("not found", { status: 404 });
   };
-  vi.stubGlobal("fetch", vi.fn(handler));
+}
+
+/** Same behaviour as the `ChatAlias` route in App.tsx. */
+function ChatAlias() {
+  const { search } = useLocation();
+  return <Navigate to={`/${search}`} replace />;
 }
 
 function renderApp(initialPath = "/") {
@@ -123,6 +135,9 @@ function renderApp(initialPath = "/") {
         <Routes>
           <Route element={<AppShell />}>
             <Route path="/" element={<ChatPage />} />
+            {/* Mirrors App.tsx: `/chat` is an alias that keeps the search string,
+                which is how the dashboard hands a question to the composer. */}
+            <Route path="/chat" element={<ChatAlias />} />
             <Route path="/chat/:conversationId" element={<ChatPage />} />
             <Route path="/documents" element={<DocumentsPage />} />
           </Route>
@@ -134,6 +149,8 @@ function renderApp(initialPath = "/") {
 
 beforeEach(() => {
   setAuthToken(null);
+  document.documentElement.removeAttribute("data-theme");
+  window.localStorage.clear();
 });
 
 afterEach(() => {
@@ -172,6 +189,100 @@ describe("AppShell", () => {
     expect(await screen.findByText(/cannot reach the api/i)).toBeInTheDocument();
     expect(screen.getByText(/uvicorn app\.main:app/)).toBeInTheDocument();
   });
+
+  it("switches the whole palette when the theme toggle is used", async () => {
+    installFetch();
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByText("Connected");
+
+    const toLight = screen.getByRole("button", { name: /switch to light theme/i });
+    await user.click(toLight);
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(screen.getByRole("button", { name: /switch to dark theme/i })).toBeInTheDocument();
+
+    // The preference must survive a reload of the tab.
+    expect(window.localStorage.getItem("hr-nexus.theme")).toBe("light");
+  });
+});
+
+describe("conversation history", () => {
+  it("lists persisted conversations and reopens one", async () => {
+    installFetch({
+      "/api/conversations": () =>
+        routeFetch({
+          conversations: [
+            { id: "c1", title: "Annual leave", message_count: 4, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:05:00Z" },
+            { id: "c2", title: "Expense limits", message_count: 2, created_at: "2026-01-02T00:00:00Z", updated_at: "2026-01-02T00:01:00Z" },
+          ],
+          total: 2,
+        }),
+      "/api/conversations/c1": () =>
+        routeFetch({
+          id: "c1",
+          title: "Annual leave",
+          message_count: 2,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:05:00Z",
+          messages: [
+            { id: "m1", role: "user", content: "How many days do I get?", sources: null, no_context: false, created_at: "2026-01-01T00:00:00Z" },
+            { id: "m2", role: "assistant", content: "25 days per year.", sources: [], no_context: false, created_at: "2026-01-01T00:00:05Z" },
+          ],
+        }),
+    });
+
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByText("Connected");
+
+    await user.click(screen.getByRole("button", { name: "History" }));
+    expect(await screen.findByText("Annual leave")).toBeInTheDocument();
+    expect(screen.getByText("Expense limits")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Annual leave"));
+    expect(await screen.findByText("25 days per year.")).toBeInTheDocument();
+  });
+
+  it("keeps one conversation across turns by reusing the streamed id", async () => {
+    const sent: { question: string; conversation_id: string | null }[] = [];
+    const base = makeHandler();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (!url.includes("/api/chat/stream")) return base(input, init);
+
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          question: string;
+          conversation_id: string | null;
+        };
+        sent.push({ question: body.question, conversation_id: body.conversation_id });
+        const id = body.conversation_id ?? "generated-1";
+        const sse = [
+          `event: start\ndata: ${JSON.stringify({ conversation_id: id, question: body.question })}\n\n`,
+          `event: sources\ndata: ${JSON.stringify({ sources: [] })}\n\n`,
+          `event: complete\ndata: ${JSON.stringify({ answer: "Grounded answer.", sources: [], no_context: false })}\n\n`,
+        ].join("");
+        return new Response(sse, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByText("Extractive mode");
+
+    const field = screen.getByLabelText(/your question/i);
+    await user.type(field, "First question{enter}");
+    expect(await screen.findByText("Grounded answer.")).toBeInTheDocument();
+
+    await user.type(field, "Second question{enter}");
+    await waitFor(() => expect(sent).toHaveLength(2));
+
+    expect(sent[0]?.conversation_id).toBeNull();
+    // The id handed back by the first stream must be reused, otherwise every
+    // turn would start a brand new conversation and lose the history.
+    expect(sent[1]?.conversation_id).toBe("generated-1");
+  });
 });
 
 describe("ChatPage", () => {
@@ -200,6 +311,74 @@ describe("ChatPage", () => {
 
     await user.type(screen.getByLabelText(/your question/i), "   ");
     expect(send).toBeDisabled();
+  });
+
+  it("renders the follow-ups the stream returned for the sources it used", async () => {
+    const base = makeHandler();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (!url.includes("/api/chat/stream")) return base(input, init);
+        const sse = [
+          `event: start\ndata: ${JSON.stringify({ conversation_id: "c-1" })}\n\n`,
+          `event: complete\ndata: ${JSON.stringify({
+            answer: "Grounded answer.",
+            sources: [],
+            no_context: false,
+            suggestions: ["What does the policy say about sick leave?"],
+          })}\n\n`,
+        ].join("");
+        return new Response(sse, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByText("Extractive mode");
+
+    await user.type(screen.getByLabelText(/your question/i), "How much annual leave?{enter}");
+    expect(await screen.findByText("Grounded answer.")).toBeInTheDocument();
+    // Grounded from the real retrieved sources, not a static list.
+    expect(
+      await screen.findByRole("button", { name: /what does the policy say about sick leave/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("asks the question handed over from the dashboard (?q=) exactly once", async () => {
+    const sent: string[] = [];
+    const base = makeHandler();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (!url.includes("/api/chat/stream")) return base(input, init);
+        const body = JSON.parse(String(init?.body ?? "{}")) as { question: string };
+        sent.push(body.question);
+        const sse = [
+          `event: start\ndata: ${JSON.stringify({ conversation_id: "c-9" })}\n\n`,
+          `event: complete\ndata: ${JSON.stringify({ answer: "Leave is 21 days.", sources: [], no_context: false })}\n\n`,
+        ].join("");
+        return new Response(sse, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }),
+    );
+
+    renderApp("/chat?q=How%20many%20annual%20leave%20days%3F");
+    // Re-queried on every poll rather than holding the node found by findByText:
+    // the answer text is patched in while React is still committing the stream,
+    // so a captured node can be replaced by a later render.
+    await waitFor(() => expect(screen.getByText("Leave is 21 days.")).toBeInTheDocument());
+    expect(sent).toEqual(["How many annual leave days?"]);
+
+    // The parameter is cleared, so re-rendering cannot ask the same question twice.
+    await waitFor(() => expect(screen.queryByLabelText(/your question/i)).toBeInTheDocument());
+    expect(sent).toHaveLength(1);
   });
 });
 
@@ -275,5 +454,172 @@ describe("DocumentsPage", () => {
     renderApp("/documents");
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
     expect(screen.getByText("boom")).toBeInTheDocument();
+  });
+
+  it("replaces the write controls with the token gate on a protected deployment", async () => {
+    let verified = false;
+    const base = makeHandler({
+      "/api/auth/status": () =>
+        routeFetch({ auth_required: true, auth_configured: true, verified }),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/auth/status")) {
+          // A correct `Authorization` header is what flips `verified`, exactly
+          // as the server would answer.
+          const header = new Headers(init?.headers).get("Authorization");
+          verified = header === "Bearer s3cret";
+          return routeFetch({ auth_required: true, auth_configured: true, verified });
+        }
+        return base(input, init);
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderApp("/documents");
+
+    expect(await screen.findByText(/management token required/i)).toBeInTheDocument();
+    // Uploading is a write: the control must not be reachable while locked.
+    expect(screen.queryByRole("button", { name: /^upload$/i })).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(/^token$/i), "s3cret");
+    await user.click(screen.getByRole("button", { name: /unlock/i }));
+
+    expect(await screen.findByRole("button", { name: /^upload$/i })).toBeInTheDocument();
+  });
+});
+
+describe("SourceCard", () => {
+  const source = {
+    chunk_id: "chunk-1",
+    document_id: "doc-1",
+    filename: "leave_policy.pdf",
+    page: 1,
+    chunk_index: 0,
+    document_type: "pdf",
+    score: 0.83,
+    citation: "leave_policy.pdf · page 1",
+    snippet: "Every full-time employee receives 18 days of paid annual leave.",
+  };
+
+  /** Stubs the object-URL and popup APIs jsdom does not implement. */
+  function stubBlobAndPopup() {
+    const created: string[] = [];
+    const revoked: string[] = [];
+    vi.stubGlobal("URL", Object.assign(URL, {
+      createObjectURL: vi.fn(() => {
+        const url = `blob:http://test/${created.length + 1}`;
+        created.push(url);
+        return url;
+      }),
+      revokeObjectURL: vi.fn((url: string) => {
+        revoked.push(url);
+      }),
+    }));
+    const open = vi.fn((_url: string, _target?: string, _features?: string) => ({
+      closed: false,
+      focus: vi.fn(),
+    }));
+    vi.stubGlobal("open", open);
+    return { created, revoked, open };
+  }
+
+  it("fetches the file with the management token instead of navigating to it", async () => {
+    const { open } = stubBlobAndPopup();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("pdf-bytes", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    setAuthToken("s3cret");
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <SourceCard source={source} index={0} />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: /leave_policy\.pdf/ }));
+    await user.click(screen.getByRole("button", { name: /open the source file/i }));
+
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    const [url, target, features] = open.mock.calls[0]!;
+    expect(url).toMatch(/^blob:/);
+    expect(target).toBe("_blank");
+    expect(features).toContain("noopener");
+
+    // The whole point of the fetch: a navigation could not carry the header.
+    const [requestUrl, init] = fetchMock.mock.calls[0]!;
+    expect(requestUrl).toContain("/api/documents/doc-1/file");
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer s3cret");
+  });
+
+  it("explains the failure instead of opening an empty tab when the fetch fails", async () => {
+    const { open } = stubBlobAndPopup();
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("nope", { status: 401 })));
+    setAuthToken("wrong");
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <SourceCard source={source} index={0} />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: /leave_policy\.pdf/ }));
+    await user.click(screen.getByRole("button", { name: /open the source file/i }));
+
+    expect(await screen.findByText(/401/)).toBeInTheDocument();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("releases the previous object URL when the same source is opened twice", async () => {
+    const { revoked, open } = stubBlobAndPopup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("pdf-bytes", { status: 200 })),
+    );
+    setAuthToken(null);
+
+    // The release is deliberately deferred, so capture the scheduled callbacks
+    // and run them by hand instead of faking timers under userEvent.
+    const realSetTimeout = window.setTimeout.bind(window);
+    const scheduled: Array<() => void> = [];
+    const spy = vi.spyOn(window, "setTimeout").mockImplementation(((
+      callback: TimerHandler,
+      delay?: number,
+      ...args: unknown[]
+    ) => {
+      if (typeof callback === "function" && delay === 30_000) scheduled.push(callback as () => void);
+      return realSetTimeout(callback, delay, ...args);
+    }) as typeof window.setTimeout);
+
+    try {
+      const { unmount } = render(
+        <MemoryRouter>
+          <SourceCard source={source} index={0} />
+        </MemoryRouter>,
+      );
+      const user = userEvent.setup();
+
+      await user.click(await screen.findByRole("button", { name: /leave_policy\.pdf/ }));
+      const trigger = screen.getByRole("button", { name: /open the source file/i });
+      await user.click(trigger);
+      await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+      await user.click(trigger);
+      expect(open).toHaveBeenCalledTimes(2);
+
+      // The first URL is released rather than pinning the file for the session.
+      expect(scheduled).toHaveLength(1);
+      scheduled[0]!();
+      expect(revoked).toEqual(["blob:http://test/1"]);
+
+      unmount();
+      expect(scheduled).toHaveLength(2);
+      scheduled[1]!();
+      expect(revoked).toEqual(["blob:http://test/1", "blob:http://test/2"]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ExternalLink, FileText } from "lucide-react";
+import { api, getAuthToken } from "../api/client";
 import type { SourceOut } from "../api/types";
 
 /**
@@ -66,6 +67,7 @@ export function SourceCard({ source, index }: { source: SourceOut; index: number
             <span className="chip">{source.document_type || "document"}</span>
             <span className="chip">page {source.page}</span>
             <span className="chip">chunk {source.chunk_index}</span>
+            {source.document_id && <SourceDownloadLink documentId={source.document_id} filename={source.filename} />}
           </div>
         </div>
       )}
@@ -99,17 +101,75 @@ export function SourceList({
   );
 }
 
-/** Link out to a source document file; only useful when auth allows downloads. */
-export function SourceDownloadLink({ documentId, filename }: { documentId: string; filename: string }) {
+/**
+ * Opens the cited file itself, so a user can confirm the quote against the source.
+ *
+ * This cannot be a plain `<a href>`: a protected deployment expects an
+ * `Authorization` header, and a navigation request cannot carry one. The file is
+ * therefore fetched with the normal client (which attaches the token) and handed
+ * to the browser as an object URL.
+ *
+ * Object URLs pin the whole file in memory until they are revoked, so the URL is
+ * revoked when it is replaced or when the card is closed. The grace period covers
+ * a click that immediately collapses the card, so the URL outlives the navigation
+ * it was created for.
+ */
+const REVOKE_GRACE_MS = 30_000;
+
+function SourceDownloadLink({ documentId, filename }: { documentId: string; filename: string }) {
+  const [error, setError] = useState<string | null>(null);
+  const objectUrl = useRef<string | null>(null);
+
+  // Released with a short grace period so a click that also collapses the card
+  // does not revoke the URL out from under the navigation it just started.
+  const release = useCallback((url: string) => {
+    window.setTimeout(() => URL.revokeObjectURL(url), REVOKE_GRACE_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (objectUrl.current) release(objectUrl.current);
+    };
+  }, [release]);
+
+  async function open() {
+    setError(null);
+    const token = getAuthToken();
+    try {
+      const response = await fetch(api.documentDownloadUrl(documentId), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) throw new Error(`Could not open the file (${response.status}).`);
+      const blob = await response.blob();
+      // Releasing the previous click's URL keeps repeated opens from
+      // accumulating copies of the file.
+      if (objectUrl.current) release(objectUrl.current);
+      const url = URL.createObjectURL(blob);
+      objectUrl.current = url;
+      const tab = window.open(url, "_blank", "noopener");
+      if (!tab) {
+        URL.revokeObjectURL(url);
+        objectUrl.current = null;
+        setError("Your browser blocked the new tab. Allow pop-ups to open the file.");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not open the file.");
+    }
+  }
+
   return (
-    <a
-      href={`/api/documents/${documentId}/file`}
-      className="inline-flex items-center gap-1 text-xs text-accent-soft hover:underline"
-      target="_blank"
-      rel="noreferrer"
-    >
-      {filename}
-      <ExternalLink className="size-3" aria-hidden="true" />
-    </a>
+    <span className="inline-flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => void open()}
+        title={`Open ${filename}`}
+        aria-label={`Open the source file ${filename}`}
+        className="inline-flex items-center gap-1 text-accent-soft hover:underline"
+      >
+        Open file
+        <ExternalLink className="size-3" aria-hidden="true" />
+      </button>
+      {error && <span className="text-danger">{error}</span>}
+    </span>
   );
 }

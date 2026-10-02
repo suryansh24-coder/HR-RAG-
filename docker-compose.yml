@@ -1,0 +1,99 @@
+# HR Nexus — full stack for local use and single-host demos.
+#
+#   docker compose up --build
+#   open http://localhost:8080
+#
+# Every value below has a working default, so the stack comes up with no .env at
+# all: SQLite for metadata, embedded Qdrant for vectors, and the extractive
+# provider so no API key is needed. Override anything through a root .env (see
+# .env.docker.example).
+
+services:
+  api:
+    build:
+      context: ./backend
+    image: hr-nexus-api:1.0.0
+    restart: unless-stopped
+    ports:
+      # Exposed for the API docs and for `curl` checks from the host. The web
+      # app talks to the service over the compose network, not through this.
+      - "8000:8000"
+    environment:
+      # Defaults to `development` so the stack is usable with zero configuration:
+      # the offline `extractive` provider is refused when APP_ENV=production, so
+      # a production default would ship a container whose chat endpoint 503s.
+      # For a real deployment set APP_ENV=production *and* a hosted LLM_PROVIDER
+      # with LLM_API_KEY (and an API_AUTH_TOKEN, which is mandatory in production).
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DEBUG: ${DEBUG:-false}
+
+      # Required for correct client IPs and HTTPS detection behind a proxy.
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:5173}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+
+      # Metadata. Mount /app/data to keep uploads, the SQLite file and the
+      # embedded vector store across rebuilds. QDRANT_PATH must live in the same
+      # volume or the vectors are lost on every rebuild.
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/hr_nexus.db}
+      DATA_DIR: /app/data/documents
+      QDRANT_PATH: /app/data/qdrant
+
+      # Vector store. "local" keeps everything in the mounted data directory;
+      # set QDRANT_URL to a real Qdrant instance to move off the container.
+      QDRANT_URL: ${QDRANT_URL:-local}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-hr_documents}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+
+      # RAG
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
+      SCORE_THRESHOLD: ${SCORE_THRESHOLD:-0.58}
+      TOP_K: ${TOP_K:-4}
+      CHUNK_SIZE: ${CHUNK_SIZE:-800}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-120}
+
+      # Answer generation. "extractive" quotes the retrieved sentences and needs
+      # no credentials; switch to openai/anthropic/gemini and set LLM_API_KEY.
+      LLM_PROVIDER: ${LLM_PROVIDER:-extractive}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+
+      # Write protection. Leave empty for a local demo; set it (and keep
+      # AUTH_REQUIRED unset) to protect uploads, reindexing and deletion.
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
+
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-30}
+      RATE_LIMIT_UPLOADS_PER_MINUTE: ${RATE_LIMIT_UPLOADS_PER_MINUTE:-10}
+      RAG_DEBUG: ${RAG_DEBUG:-false}
+    volumes:
+      - api-data:/app/data
+      # Keeps the ~130 MB embedding model across restarts instead of
+      # re-downloading it on every cold start.
+      - model-cache:/home/nexus/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        # Empty means "same origin", which nginx proxies to `api` above.
+        VITE_API_ORIGIN: ${VITE_API_ORIGIN:-}
+    image: hr-nexus-web:1.0.0
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  api-data:
+  model-cache:

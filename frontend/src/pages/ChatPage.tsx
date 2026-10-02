@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Bot, Copy, Check, Send, Square, User, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -42,6 +42,8 @@ function greeting(): LocalMessage {
 
 export function ChatPage() {
   const { conversationId } = useParams();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { stats } = useApp();
 
   const [messages, setMessages] = useState<LocalMessage[]>([greeting()]);
@@ -51,14 +53,41 @@ export function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
+  // The thread this screen is talking to. The first question on `/` has no id
+  // yet, so it is learned from the stream's `start` event and then reused — the
+  // server keys a conversation off the id it hands back, and sending `null` again
+  // would start a brand new conversation on every turn.
+  const [activeId, setActiveId] = useState<string | null>(conversationId ?? null);
+
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const autoAskedRef = useRef(false);
+  /** Conversation id this screen streamed itself — see the history effect below. */
+  const streamedIdRef = useRef<string | null>(null);
+
+  /**
+   * The conversation this screen is showing.
+   *
+   * Two spellings are accepted: `/chat/<id>` (a deep link or a history click)
+   * and `/?conversation=<id>` (the id the stream handed back mid-answer). The
+   * query form exists because changing the *path* re-keys the route element and
+   * remounts this screen, which would throw away the answer being streamed.
+   */
+  const threadId = conversationId ?? searchParams.get("conversation");
 
   // Load history when the route carries a conversation id.
   useEffect(() => {
-    if (!conversationId) {
+    setActiveId(threadId);
+    if (!threadId) {
       setMessages([greeting()]);
+      return;
+    }
+    // The id arriving mid-stream marks the transition this screen just made:
+    // re-reading the thread at that moment would replace the answer we are still
+    // receiving with a snapshot taken before it was persisted.
+    if (streamedIdRef.current === threadId) {
+      streamedIdRef.current = null;
       return;
     }
     let cancelled = false;
@@ -66,7 +95,7 @@ export function ChatPage() {
 
     (async () => {
       try {
-        const detail: ConversationDetail = await api.conversation(conversationId);
+        const detail: ConversationDetail = await api.conversation(threadId);
         if (cancelled) return;
         const history = detail.messages.map<LocalMessage>((message) => ({
           id: message.id,
@@ -85,7 +114,7 @@ export function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [threadId]);
 
   // Pin to the newest message as content grows.
   useEffect(() => {
@@ -133,9 +162,23 @@ export function ChatPage() {
         );
 
       try {
-        await streamChat(trimmed, conversationId ?? null, {
+        await streamChat(trimmed, activeId, {
           signal: controller.signal,
           onEvent: (event: StreamEvent) => {
+            if (event.stage === "start") {
+              const id = event.data.conversation_id ? String(event.data.conversation_id) : null;
+              if (id) {
+                setActiveId(id);
+                // Keep the address bar in step so a reload or a shared link reopens
+                // this thread. The id goes in the query string, not the path:
+                // changing the path would remount this screen mid-answer.
+                if (id !== threadId) {
+                  streamedIdRef.current = id;
+                  navigate(`/?conversation=${encodeURIComponent(id)}`, { replace: true });
+                }
+              }
+              return;
+            }
             if (event.stage === "error") {
               setError(event.message || "The assistant could not answer that.");
               setStage(null);
@@ -146,6 +189,9 @@ export function ChatPage() {
                 content: String(event.data.answer ?? ""),
                 sources: (event.data.sources as SourceOut[] | undefined) ?? [],
                 noContext: Boolean(event.data.no_context),
+                // Follow-ups are derived server-side from the sources that were
+                // really retrieved, so they are always answerable questions.
+                suggestions: (event.data.suggestions as string[] | undefined) ?? [],
               });
               setStage(null);
               return;
@@ -178,8 +224,27 @@ export function ChatPage() {
         });
       }
     },
-    [conversationId, streaming],
+    [activeId, threadId, navigate, streaming],
   );
+
+  // Hand-off from the dashboard: `/chat?q=How many annual leaves…` asks that
+  // question straight away. Guarded so re-renders (or StrictMode's double mount)
+  // cannot fire the same question twice, and only `q` is dropped afterwards so a
+  // refresh does not re-ask it and `?conversation=` survives.
+  useEffect(() => {
+    const question = searchParams.get("q");
+    if (!question || autoAskedRef.current) return;
+    autoAskedRef.current = true;
+    const next = new URLSearchParams(searchParams);
+    next.delete("q");
+    setSearchParams(next, { replace: true });
+    void send(question);
+  }, [searchParams, send, setSearchParams]);
+
+  // Put the cursor in the composer on load; the dashboard link lands here too.
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
 
   function stop() {
     abortRef.current?.abort();
@@ -203,7 +268,7 @@ export function ChatPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-edge px-5 py-3.5">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-edge bg-canvas/60 px-5 py-3.5 backdrop-blur-xl">
         <div>
           <h1 className="text-sm font-semibold text-ink">Ask a question</h1>
           <p className="mt-0.5 text-xs text-ink-faint">
@@ -250,7 +315,7 @@ export function ChatPage() {
           )}
 
           {messages.length === 1 && (
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2.5 sm:grid-cols-2">
               {[
                 "What is the annual leave entitlement?",
                 "How many office days per week do hybrid employees need to attend?",
@@ -261,7 +326,7 @@ export function ChatPage() {
                   key={example}
                   type="button"
                   onClick={() => send(example)}
-                  className="rounded-lg border border-edge bg-surface px-3.5 py-3 text-left text-sm text-ink-muted transition-colors hover:border-accent/45 hover:text-ink"
+                  className="glass-card px-4 py-3.5 text-left text-sm text-ink-muted"
                 >
                   {example}
                 </button>
@@ -271,9 +336,9 @@ export function ChatPage() {
         </div>
       </div>
 
-      <footer className="border-t border-edge px-5 py-3.5">
+      <footer className="border-t border-edge bg-canvas/70 px-5 py-3.5 backdrop-blur-xl">
         <form
-          className="mx-auto flex max-w-3xl items-end gap-2.5"
+          className="glass-inset mx-auto flex max-w-3xl items-end gap-2.5 p-2"
           onSubmit={(event) => {
             event.preventDefault();
             void send(input);
@@ -281,7 +346,7 @@ export function ChatPage() {
         >
           <textarea
             ref={inputRef}
-            className="field max-h-40 min-h-[46px] resize-y py-3"
+            className="field max-h-40 min-h-[46px] resize-y border-transparent bg-transparent py-3 focus:border-transparent"
             placeholder="Ask about leave, expenses, security, performance…"
             value={input}
             rows={1}
@@ -343,10 +408,12 @@ function MessageBubble({
 
       <div className={`min-w-0 flex-1 ${isUser ? "items-end" : ""}`}>
         <div
-          className={`inline-block max-w-full rounded-xl px-4 py-3 text-sm leading-relaxed ${
+          className={`glass-sheen inline-block max-w-full rounded-xl px-4 py-3 text-sm leading-relaxed ${
+            // User turns keep a tinted fill (rather than a solid accent) so the
+            // markdown inside stays legible in both themes.
             isUser
-              ? "bg-surface-raised text-ink"
-              : "border border-edge bg-surface text-ink-muted"
+              ? "border border-accent/25 bg-accent/12 text-ink"
+              : "glass text-ink-muted"
           }`}
         >
           {message.content ? (

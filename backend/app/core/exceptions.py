@@ -7,9 +7,12 @@ are never returned to clients.
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import HTTPException, status
+
+#: Starlette renamed ``HTTP_422_UNPROCESSABLE_ENTITY`` to
+#: ``HTTP_422_UNPROCESSABLE_CONTENT`` and the old constant now emits a
+#: deprecation warning on access, so the value is inlined here.
+UNPROCESSABLE = 422
 
 
 class AppError(HTTPException):
@@ -34,7 +37,7 @@ class NotFoundError(AppError):
 class ValidationError(AppError):
     def __init__(self, detail: str) -> None:
         super().__init__(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=UNPROCESSABLE,
             detail=detail,
             code="validation_error",
         )
@@ -65,34 +68,3 @@ class InternalError(AppError):
             detail=detail,
             code="internal_error",
         )
-
-
-class AuthenticationError(AppError):
-    def __init__(self, detail: str = "Authentication required.") -> None:
-        super().__init__(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=detail,
-            code="unauthorized",
-        )
-
-
-class ForbiddenError(AppError):
-    def __init__(self, detail: str = "You do not have permission to perform this action.") -> None:
-        super().__init__(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=detail,
-            code="forbidden",
-        )
-
-
-class TimeoutError_(AppError):
-    def __init__(self, detail: str = "The request timed out. Please try again.") -> None:
-        super().__init__(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=detail,
-            code="timeout",
-        )
-
-
-def to_payload(exc: AppError) -> dict[str, Any]:
-    return {"detail": exc.detail, "code": exc.code}

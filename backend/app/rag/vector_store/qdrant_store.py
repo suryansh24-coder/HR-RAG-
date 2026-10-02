@@ -329,19 +329,6 @@ class QdrantStore:
                 counts[doc_id] = counts.get(doc_id, 0) + 1
         return counts
 
-    def all_document_ids(self) -> set[str]:
-        return {
-            doc_id for doc_id in self.chunk_counts_by_document() if doc_id
-        }
-
-    def filenames_by_document(self) -> dict[str, str]:
-        mapping: dict[str, str] = {}
-        for payload in self._iter_payloads([PAYLOAD_DOCUMENT_ID, PAYLOAD_FILENAME]):
-            doc_id = str(payload.get(PAYLOAD_DOCUMENT_ID, ""))
-            if doc_id and doc_id not in mapping:
-                mapping[doc_id] = str(payload.get(PAYLOAD_FILENAME, "unknown"))
-        return mapping
-
     def corpus_terms(self) -> frozenset[str]:
         """Every stemmed word that appears anywhere in the indexed corpus.
 

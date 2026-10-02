@@ -1,0 +1,14 @@
+# Keep the image to what nginx actually serves.
+node_modules/
+dist/
+.vite/
+coverage/
+
+# Local env files may hold a real management token.
+.env
+.env.*
+!.env.example
+
+Dockerfile
+.dockerignore
+README.md
